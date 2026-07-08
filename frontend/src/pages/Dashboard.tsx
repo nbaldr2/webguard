@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { 
-  ShieldAlert, Users, Eye, Percent, Globe, RefreshCw, Plus, 
-  Trash2, Ban, CheckCircle, ShieldCheck, ArrowRightLeft, Chrome, Smartphone,
+  ShieldAlert, Users, Eye, Percent, Globe, RefreshCw,
+  Trash2, Ban, CheckCircle, ShieldCheck, Chrome, Smartphone,
   Calendar, Database, Tag
 } from 'lucide-react';
 import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend, ArcElement } from 'chart.js';
@@ -297,13 +297,7 @@ export const Dashboard: React.FC = () => {
         {
           label: label,
           data: items.map(i => i.value),
-          backgroundColor: [
-            '#8b5cf6', // Violet
-            '#06b6d4', // Cyan
-            '#f43f5e', // Rose
-            '#10b981', // Emerald
-            '#f59e0b', // Amber
-          ],
+          backgroundColor: ['#8b5cf6', '#06b6d4', '#f43f5e', '#10b981', '#f59e0b'],
           borderWidth: 1,
           borderColor: 'rgba(0,0,0,0.1)'
         }

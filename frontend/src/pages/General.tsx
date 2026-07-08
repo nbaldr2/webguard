@@ -151,7 +151,7 @@ export const General: React.FC = () => {
 
         {/* Provider List */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-          {providers.map((provider, idx) => (
+          {providers.map((provider) => (
             <div key={provider.id} style={{
               display: 'flex', alignItems: 'center', gap: '0.75rem',
               padding: '0.75rem 1rem',

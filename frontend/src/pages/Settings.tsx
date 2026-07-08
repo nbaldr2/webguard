@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Plus, Trash2, Globe, Shield } from 'lucide-react';
+import { Plus, Trash2, Globe } from 'lucide-react';
 
 interface BlacklistRule {
   id: number;
@@ -41,7 +41,7 @@ export const Settings: React.FC = () => {
   const [newHostname, setNewHostname] = useState('');
   const [newIsp, setNewIsp] = useState('');
 
-  const [savingCountries, setSavingCountries] = useState(false);
+  const [_savingCountries, setSavingCountries] = useState(false);
   const [savingSystems, setSavingSystems] = useState(false);
   const [savingBrowsers, setSavingBrowsers] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
