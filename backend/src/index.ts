@@ -12,6 +12,9 @@ import tgRouter from './routes/tg';
 
 const app = express();
 
+// Trust proxy for correct IP detection behind Nginx
+app.set('trust proxy', 1);
+
 // Configure CORS
 app.use(cors({
   origin: '*', // For development, allow all. In production, restrict to specific domains.
