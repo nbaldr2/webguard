@@ -71,7 +71,7 @@ export const Dashboard: React.FC = () => {
   const [hasMoreVisits, setHasMoreVisits] = useState(false);
   const [totalVisits, setTotalVisits] = useState(0);
 
-  const API_BASE_URL = 'http://localhost:5005/api';
+  const API_BASE_URL = '/api';
   const VISITS_PAGE_SIZE = 100;
 
   const fetchVisits = useCallback(async (offset: number, append: boolean) => {

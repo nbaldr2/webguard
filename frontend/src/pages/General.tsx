@@ -21,7 +21,7 @@ export const General: React.FC = () => {
   const [providerForm, setProviderForm] = useState({ name: '', url_template: '', api_key: '', country_field: '', isp_field: '' });
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  const API = 'http://localhost:5005/api';
+  const API = '/api';
 
   const showMessage = (type: 'success' | 'error', text: string) => {
     setMessage({ type, text });

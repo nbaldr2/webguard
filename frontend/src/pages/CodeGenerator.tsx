@@ -18,7 +18,7 @@ export const CodeGenerator: React.FC = () => {
   const [encryptedPHP, setEncryptedPHP] = useState<string | null>(null);
   const [encryptedCopied, setEncryptedCopied] = useState(false);
 
-  const API_BASE_URL = 'http://localhost:5005/api';
+  const API_BASE_URL = '/api';
 
   const fetchSnippets = useCallback(async (source: string) => {
     if (!token) return;

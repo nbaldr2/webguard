@@ -46,7 +46,7 @@ export const Settings: React.FC = () => {
   const [savingBrowsers, setSavingBrowsers] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  const API = 'http://localhost:5005/api';
+  const API = '/api';
 
   const loadSettings = async () => {
     if (!token) return;
