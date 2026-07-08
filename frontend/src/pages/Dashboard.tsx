@@ -280,7 +280,7 @@ export const Dashboard: React.FC = () => {
     }
   };
 
-  const getDoughnutData = (items: { name: string; value: number }[] | undefined, label: string, color: string) => {
+  const getDoughnutData = (items: { name: string; value: number }[] | undefined, label: string, _color: string) => {
     if (!items || items.length === 0) {
       return {
         labels: ['No Data'],
