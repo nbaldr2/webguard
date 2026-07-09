@@ -109,7 +109,20 @@ async function runTests() {
         // Let's rely on standard tests.
       },
       expected: null // Will depend on real geoip lookup for 1.1.1.1
-    }
+    },
+    {
+      name: 'JA3 Fingerprint Block (curl TLS signature)',
+      payload: {
+        fd: 'utest',
+        ip: '72.229.28.185',
+        ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        ref: ''
+      },
+      headers: {
+        'x-ja3-fingerprint': '37f46e8c75d7b5791c144e5917805ad3' // curl JA3 signature
+      },
+      expected: '0'
+    },
   ];
 
   console.log('\nStarting bot detection API tests...');
@@ -121,7 +134,7 @@ async function runTests() {
     try {
       const res = await fetch(API_URL, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(tc.headers || {}) },
         body: JSON.stringify(tc.payload),
       });
 

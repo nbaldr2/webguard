@@ -36,6 +36,46 @@ async function cacheSet(ip: string, data: { country: string; isp: string }): Pro
   memCache.set(ip, { ...data, timestamp: Date.now() });
 }
 
+// Sliding-window rate limit using Redis sorted sets (ZADD/ZREM)
+async function isRateLimited(ip: string, uflow: string, limit: number = 60, windowSec: number = 60): Promise<boolean> {
+  if (!isRedisConnected()) return false; // Fail open if Redis is offline
+  
+  const key = `ratelimit:${uflow}:${ip}`;
+  const now = Date.now();
+  const clearBefore = now - (windowSec * 1000);
+  
+  try {
+    const multi = redis.multi();
+    // Remove old logs outside of window
+    multi.zremrangebyscore(key, 0, clearBefore);
+    // Add current request log
+    multi.zadd(key, now, String(now));
+    // Count remaining logs in window
+    multi.zcard(key);
+    // Set TTL on key
+    multi.expire(key, windowSec);
+    
+    const results = await multi.exec();
+    if (!results) return false;
+    
+    // ZCARD command is 3rd in the transaction sequence (index 2)
+    const cardResult = results[2];
+    const count = typeof cardResult === 'number' ? cardResult : (cardResult && cardResult[1] ? Number(cardResult[1]) : 0);
+    
+    return count > limit;
+  } catch (err) {
+    console.warn('Rate limit check Redis error:', (err as Error).message);
+    return false;
+  }
+}
+
+// Known automated scraper/bot JA3 TLS signatures
+const BLOCKED_JA3 = [
+  '37f46e8c75d7b5791c144e5917805ad3', // curl (common OpenSSL)
+  'c3b7a5a8820f4c02288dbff46b9a896d', // python-requests
+  'e2c45163d76e737c3ed03a08fb635a96'  // Go HTTP client
+];
+
 // Check if the user agent matches known crawlers, bots, scrapers, or automation tools
 function isBotOrCrawlerUA(ua: string): boolean {
   const uaLower = ua.toLowerCase();
@@ -303,6 +343,23 @@ export async function detectBot(params: {
     isBot = 0;
     blockReason = 'Blocked Crawler/Bot';
   }
+
+  // JA3 TLS Fingerprint Check — no I/O needed
+  // Only active when Nginx/proxy forwards X-JA3-Fingerprint or X-SSL-JA3 header
+  if (isBot === 1 && headers) {
+    const ja3 = headers['x-ja3-fingerprint'] || headers['x-ssl-ja3'] || headers['x-ja3'];
+    if (ja3 && typeof ja3 === 'string' && BLOCKED_JA3.includes(ja3.toLowerCase())) {
+      isBot = 0;
+      blockReason = 'Blocked JA3 TLS fingerprint';
+    }
+  }
+
+  // Sliding-window Rate Limit — Redis I/O (fast, async)
+  if (isBot === 1 && await isRateLimited(ip, uflow)) {
+    isBot = 0;
+    blockReason = 'Rate limit exceeded';
+  }
+
 
   // Client Hints Consistency check (User-Agent vs Sec-Ch-Ua-Platform / Sec-Ch-Ua)
   if (isBot === 1 && headers) {
