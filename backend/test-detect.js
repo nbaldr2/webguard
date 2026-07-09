@@ -52,7 +52,7 @@ async function runTests() {
       name: 'Normal Human Browser (Allow)',
       payload: {
         fd: 'utest',
-        ip: '8.8.4.4', // Standard public DNS IP
+        ip: '72.229.28.185', // Residential IP
         ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         ref: 'https://google.com'
       },
@@ -69,17 +69,17 @@ async function runTests() {
       expected: '0'
     },
     {
-      name: 'Authentic Googlebot (Allow via FCrDNS)',
+      name: 'Authentic Googlebot (Block)',
       payload: {
         fd: 'utest',
         ip: '66.249.66.1', // Real Googlebot IP range
         ua: 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
         ref: ''
       },
-      expected: '1'
+      expected: '0'
     },
     {
-      name: 'Spoofed Googlebot (Block via FCrDNS)',
+      name: 'Spoofed Googlebot (Block)',
       payload: {
         fd: 'utest',
         ip: '8.8.4.4', // Claims to be Googlebot but IP is Google Public DNS (no reverse DNS pointing to Googlebot)

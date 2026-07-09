@@ -26,6 +26,7 @@ router.post('/', async (req: Request, res: Response) => {
       ua: userAgent,
       ref: referrer,
       source: visitSource,
+      headers: req.headers,
     });
 
     // V1 compatibility: Return "1" (allow) or "0" (block) as a raw string

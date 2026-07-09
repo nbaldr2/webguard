@@ -36,50 +36,29 @@ async function cacheSet(ip: string, data: { country: string; isp: string }): Pro
   memCache.set(ip, { ...data, timestamp: Date.now() });
 }
 
-// Perform reverse and forward DNS lookup to verify authentic search crawlers (FCrDNS)
-async function verifyFCrDNS(ip: string, ua: string): Promise<{ isVerifiedCrawler: boolean; shouldBlock: boolean }> {
+// Check if the user agent matches known crawlers, bots, scrapers, or automation tools
+function isBotOrCrawlerUA(ua: string): boolean {
   const uaLower = ua.toLowerCase();
-  let expectedDomainPattern: RegExp | null = null;
-
-  if (uaLower.includes('googlebot')) {
-    expectedDomainPattern = /\.googlebot\.com$|\.google\.com$/;
-  } else if (uaLower.includes('bingbot') || uaLower.includes('msnbot')) {
-    expectedDomainPattern = /\.search\.msn\.com$/;
-  } else if (uaLower.includes('yandex.com/bots') || uaLower.includes('yandexbot')) {
-    expectedDomainPattern = /\.yandex\.ru$|\.yandex\.com$|\.yandex\.net$/;
-  } else if (uaLower.includes('baiduspider')) {
-    expectedDomainPattern = /\.baidu\.com$|\.baidu\.jp$/;
+  
+  const botKeywords = [
+    'bot', 'crawler', 'spider', 'crawl', 'scraper', 'scraping',
+    'ahrefs', 'semrush', 'gptbot', 'claudebot', 'commoncrawl',
+    'facebookexternalhit', 'twitterbot', 'linkedinbot', 'slackbot',
+    'discordbot', 'whatsapp', 'telegrambot', 'pinterestbot',
+    'headless', 'selenium', 'playwright', 'puppeteer', 'webdriver',
+    'curl', 'wget', 'python', 'urllib', 'http-client', 'httpclient',
+    'perl', 'libwww', 'axios', 'node-fetch', 'go-http-client', 'java/'
+  ];
+  
+  if (botKeywords.some(keyword => uaLower.includes(keyword))) {
+    return true;
   }
-
-  // If the User-Agent doesn't claim to be a verified crawler, we skip FCrDNS verification
-  if (!expectedDomainPattern) {
-    return { isVerifiedCrawler: false, shouldBlock: false };
+  
+  if (/https?:\/\//i.test(ua)) {
+    return true;
   }
-
-  try {
-    const hostnames = await dns.promises.reverse(ip);
-    if (!hostnames || hostnames.length === 0) {
-      // Claims to be Googlebot but has no reverse DNS PTR record -> Spoof!
-      return { isVerifiedCrawler: false, shouldBlock: true };
-    }
-
-    for (const hostname of hostnames) {
-      if (expectedDomainPattern.test(hostname)) {
-        // Resolve hostname to IPs and verify it matches the source IP
-        const resolvedIps: string[] = await dns.promises.resolve4(hostname).catch(() => []);
-        if (resolvedIps.includes(ip)) {
-          return { isVerifiedCrawler: true, shouldBlock: false }; // Verified!
-        }
-      }
-    }
-
-    // None of the hostnames matched or resolved back -> Spoof!
-    return { isVerifiedCrawler: false, shouldBlock: true };
-  } catch (err) {
-    // DNS errors (e.g. ENOTFOUND) mean no PTR record or DNS failure.
-    // If it claims to be Googlebot but DNS fails, block it to be safe.
-    return { isVerifiedCrawler: false, shouldBlock: true };
-  }
+  
+  return false;
 }
 
 // Fetch IP details from user-configured external APIs with failover and caching
@@ -272,8 +251,9 @@ export async function detectBot(params: {
   ua: string;
   ref: string;
   source?: string;
+  headers?: Record<string, string | string[] | undefined>;
 }): Promise<number> {
-  const { uflow, ip, ua, ref, source } = params;
+  const { uflow, ip, ua, ref, source, headers } = params;
   const date = new Date();
 
   // 1. Validate user and subscription status
@@ -317,6 +297,37 @@ export async function detectBot(params: {
     [uflow]
   );
   const settings = settingsRes.rows[0] || { countries: '', systems: '', browsers: '' };
+
+  // Immediate Crawler/Bot UA Check — no I/O needed
+  if (isBot === 1 && isBotOrCrawlerUA(ua)) {
+    isBot = 0;
+    blockReason = 'Blocked Crawler/Bot';
+  }
+
+  // Client Hints Consistency check (User-Agent vs Sec-Ch-Ua-Platform / Sec-Ch-Ua)
+  if (isBot === 1 && headers) {
+    const chPlatform = headers['sec-ch-ua-platform'] || headers['Sec-Ch-Ua-Platform'];
+    if (chPlatform && typeof chPlatform === 'string') {
+      const platformClean = chPlatform.replace(/"/g, '').toLowerCase();
+      const uaLower = ua.toLowerCase();
+      if (platformClean === 'windows' && !uaLower.includes('windows')) {
+        isBot = 0;
+        blockReason = 'Client Hints / UA mismatch (Windows)';
+      } else if (platformClean === 'macos' && (!uaLower.includes('macintosh') && !uaLower.includes('mac os x'))) {
+        isBot = 0;
+        blockReason = 'Client Hints / UA mismatch (macOS)';
+      } else if (platformClean === 'android' && !uaLower.includes('android')) {
+        isBot = 0;
+        blockReason = 'Client Hints / UA mismatch (Android)';
+      } else if (platformClean === 'linux' && !uaLower.includes('linux')) {
+        isBot = 0;
+        blockReason = 'Client Hints / UA mismatch (Linux)';
+      } else if (platformClean === 'ios' && (!uaLower.includes('iphone') && !uaLower.includes('ipad'))) {
+        isBot = 0;
+        blockReason = 'Client Hints / UA mismatch (iOS)';
+      }
+    }
+  }
 
   // OS check — no I/O needed
   if (isBot === 1) {
@@ -407,13 +418,6 @@ export async function detectBot(params: {
       }
     } catch (err) {
       // Ignore reverse DNS lookup failures
-    }
-
-    // FCrDNS (Forward-Confirmed Reverse DNS) check for search crawlers
-    const fcrDnsResult = await verifyFCrDNS(ip, ua);
-    if (fcrDnsResult.shouldBlock) {
-      isBot = 0;
-      blockReason = 'Spoofed crawler (FCrDNS failed)';
     }
   }
 
