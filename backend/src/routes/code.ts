@@ -29,10 +29,13 @@ router.get('/snippet', async (req: AuthenticatedRequest, res: Response) => {
     const apiDetectUrl = `${protocol}://${host}/api/detect`;
 
     // PHP Snippet
-    const p1Replaced = tds_p1.replace('__API_URL__detect', apiDetectUrl);
+    const p1Replaced = tds_p1.replace('__API_URL__detect', apiDetectUrl)
+      .replace(/^<\?php\s*/i, '')
+      .trim();
+    const p2Clean = tds_p2.replace(/\s*\?>\s*$/i, '').trim();
     const phpSnippet = source
-      ? `${p1Replaced}${uflow}','src'=>'${source}'${tds_p2}`
-      : `${p1Replaced}${uflow}${tds_p2}`;
+      ? `${p1Replaced}${uflow}','src'=>'${source}'${p2Clean}`
+      : `${p1Replaced}${uflow}${p2Clean}`;
 
     // Node.js Express Middleware Snippet
     const sourceField = source ? `,\n        src: '${source}'` : '';
