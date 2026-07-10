@@ -341,15 +341,13 @@ export async function detectBot(params: {
   const user = userRes.rows[0];
   
   // Subscription check
-  if (user.active === 0) {
-    // Antibot toggled OFF by user -> Allow all traffic (bypass)
+if (user.active === 0) {
     await logVisit({ uflow, ip, country: 'N/A', hostname: 'N/A', isp: 'N/A', os: 'N/A', browser: 'N/A', ref, isBot: 1, source: source || '', blockReason: '' });
-    return 1;
+    return { isBot: 1, blockReason: '' };
   }
 
   if (user.active === 2) {
-    // Account pending or banned -> Block
-    return 0;
+    return { isBot: 0, blockReason: 'Account banned' };
   }
 
   if (user.end_sub && new Date(user.end_sub) < date) {
