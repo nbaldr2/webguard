@@ -1,4 +1,5 @@
 import dns from 'dns';
+import net from 'net';
 import { db } from '../db';
 import redis, { isRedisConnected } from '../redis';
 
@@ -223,6 +224,10 @@ export function getDetectedBrowser(ua: string): string {
   if (/musical_ly|tiktok/i.test(ua))      return 'TikTok App';
 
   // Desktop/mobile browsers — Edge before Chrome (Edge UA includes 'Chrome')
+  if (/torbrowser/i.test(ua))             return 'Tor Browser';
+  if (/arc\//i.test(ua))                  return 'Arc';
+  if (/waterfox/i.test(ua))              return 'Waterfox';
+  if (/palemoon/i.test(ua))              return 'Pale Moon';
   if (/edg(?:e|)\//i.test(ua))            return 'Edge';
   // Opera GX / Opera — check OPR before generic Chrome
   if (/OPR\//i.test(ua))                  return /GX/i.test(ua) ? 'Opera GX' : 'Opera';
@@ -251,35 +256,62 @@ export function getDetectedBrowser(ua: string): string {
   return 'Unknown Browser';
 }
 
-// Check if IP is in the bad_ip table
-async function isIPBad(ip: string): Promise<boolean> {
-  const psqlQuery = `
-    SELECT 1 FROM bad_ip 
-    WHERE $1 = bad_ip 
-       OR $1 LIKE REPLACE(bad_ip, '*', '%')
-    LIMIT 1
-  `;
-  const dbRes = await db.query(psqlQuery, [ip]);
+// Check if IP is in the bad_ip table (supporting CIDR subnets and uflow segmentation)
+async function isIPBad(ip: string, uflow: string): Promise<boolean> {
+  const isIPValid = net.isIP(ip) !== 0;
+  
+  let psqlQuery = '';
+  let params: any[] = [];
+  
+  if (isIPValid) {
+    psqlQuery = `
+      SELECT 1 FROM bad_ip 
+      WHERE (uflow IS NULL OR uflow = $2) AND (
+         $1 = bad_ip 
+         OR $1 LIKE REPLACE(bad_ip, '*', '%')
+         OR (bad_ip LIKE '%/%' AND $1::inet << bad_ip::cidr)
+      )
+      LIMIT 1
+    `;
+    params = [ip, uflow];
+  } else {
+    psqlQuery = `
+      SELECT 1 FROM bad_ip 
+      WHERE (uflow IS NULL OR uflow = $2) AND (
+         $1 = bad_ip 
+         OR $1 LIKE REPLACE(bad_ip, '*', '%')
+      )
+      LIMIT 1
+    `;
+    params = [ip, uflow];
+  }
+  
+  const dbRes = await db.query(psqlQuery, params);
   return dbRes.rows.length > 0;
 }
 
-// Check if hostname matches blacklisted pattern
-async function isHostnameBad(hostname: string): Promise<boolean> {
+// Check if hostname matches blacklisted pattern (supporting uflow segmentation)
+async function isHostnameBad(hostname: string, uflow: string): Promise<boolean> {
   if (hostname === 'N/A' || !hostname) return false;
-  // Check if hostname contains any blacklisted hostname pattern
   const dbRes = await db.query(
-    `SELECT 1 FROM hostname WHERE $1 ILIKE CONCAT('%', hostname, '%') LIMIT 1`,
-    [hostname]
+    `SELECT 1 FROM hostname 
+     WHERE (uflow IS NULL OR uflow = $2) 
+       AND $1 ILIKE CONCAT('%', hostname, '%') 
+     LIMIT 1`,
+    [hostname, uflow]
   );
   return dbRes.rows.length > 0;
 }
 
-// Check if ISP matches blacklisted pattern
-async function isISPBad(isp: string): Promise<boolean> {
+// Check if ISP matches blacklisted pattern (supporting uflow segmentation)
+async function isISPBad(isp: string, uflow: string): Promise<boolean> {
   if (isp === 'N/A' || !isp) return false;
   const dbRes = await db.query(
-    `SELECT 1 FROM isp WHERE $1 ILIKE CONCAT('%', isp, '%') LIMIT 1`,
-    [isp]
+    `SELECT 1 FROM isp 
+     WHERE (uflow IS NULL OR uflow = $2) 
+       AND $1 ILIKE CONCAT('%', isp, '%') 
+     LIMIT 1`,
+    [isp, uflow]
   );
   return dbRes.rows.length > 0;
 }
@@ -292,7 +324,7 @@ export async function detectBot(params: {
   ref: string;
   source?: string;
   headers?: Record<string, string | string[] | undefined>;
-}): Promise<number> {
+}): Promise<{ isBot: number; blockReason: string }> {
   const { uflow, ip, ua, ref, source, headers } = params;
   const date = new Date();
 
@@ -333,10 +365,10 @@ export async function detectBot(params: {
 
   // 2. Run Bot Detection Pipeline (fast checks first, expensive I/O deferred)
   const settingsRes = await db.query(
-    'SELECT countries, systems, browsers FROM user_settings WHERE uflow = $1 LIMIT 1',
+    'SELECT countries, systems, browsers, rate_limit FROM user_settings WHERE uflow = $1 LIMIT 1',
     [uflow]
   );
-  const settings = settingsRes.rows[0] || { countries: '', systems: '', browsers: '' };
+  const settings = settingsRes.rows[0] || { countries: '', systems: '', browsers: '', rate_limit: 120 };
 
   // Immediate Crawler/Bot UA Check — no I/O needed
   if (isBot === 1 && isBotOrCrawlerUA(ua)) {
@@ -355,7 +387,7 @@ export async function detectBot(params: {
   }
 
   // Sliding-window Rate Limit — Redis I/O (fast, async)
-  if (isBot === 1 && await isRateLimited(ip, uflow)) {
+  if (isBot === 1 && await isRateLimited(ip, uflow, settings.rate_limit || 120)) {
     isBot = 0;
     blockReason = 'Rate limit exceeded';
   }
@@ -441,7 +473,7 @@ export async function detectBot(params: {
   }
 
   // IP Blacklist check — fast DB query, no DNS/API needed
-  if (isBot === 1 && await isIPBad(ip)) {
+  if (isBot === 1 && await isIPBad(ip, uflow)) {
     isBot = 0;
     blockReason = 'Blacklisted IP';
   }
@@ -480,10 +512,10 @@ export async function detectBot(params: {
 
   // Hostname / ISP / Cloud checks
   if (isBot === 1) {
-    if (await isHostnameBad(hostname)) {
+    if (await isHostnameBad(hostname, uflow)) {
       isBot = 0;
       blockReason = 'Blacklisted hostname';
-    } else if (await isISPBad(ipInfo.isp)) {
+    } else if (await isISPBad(ipInfo.isp, uflow)) {
       isBot = 0;
       blockReason = 'Blacklisted ISP';
     } else if (isCloudProvider(ipInfo.isp) && isConsumerUA(ua)) {
@@ -508,7 +540,7 @@ export async function detectBot(params: {
     blockReason,
   });
 
-  return isBot;
+  return { isBot, blockReason };
 }
 
 // Log visit to PostgreSQL
@@ -549,7 +581,10 @@ function isCloudProvider(isp: string): boolean {
   const providers = [
     'amazon', 'aws', 'google cloud', 'gce', 'microsoft', 'azure', 'digitalocean', 
     'vultr', 'linode', 'hetzner', 'ovh', 'leaseweb', 'colocrossing', 'quadranet', 
-    'psychz', 'contabo', 'hosting', 'cloud', 'server', 'vps', 'datacenter'
+    'psychz', 'contabo', 'hosting', 'cloud', 'server', 'vps', 'datacenter',
+    'scaleway', 'kamatera', 'oracle', 'alibaba', 'tencent', 'ovhcloud', 'cogent',
+    'm247', 'choopa', 'zenlayer', 'fastly', 'cloudflare', 'akamai', 'softlayer',
+    'rackspace', 'equinix'
   ];
   const ispLower = isp.toLowerCase();
   return providers.some(p => ispLower.includes(p));

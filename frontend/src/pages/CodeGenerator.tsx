@@ -67,8 +67,12 @@ export const CodeGenerator: React.FC = () => {
 
   const handleEncryptPHP = () => {
     if (!snippets?.php) return;
-    const encoded = btoa(snippets.php);
-    const wrapped = `<?php\n\n$payload = '${encoded}';\n\neval(base64_decode($payload)); ?>`;
+    const clean = snippets.php
+      .replace(/^<\?php\s*/i, '')
+      .replace(/\s*\?>\s*$/i, '')
+      .trim();
+    const encoded = btoa(clean);
+    const wrapped = `<?php\n\n$payload = '${encoded}';\n\neval(base64_decode($payload));`;
     setEncryptedPHP(wrapped);
   };
 

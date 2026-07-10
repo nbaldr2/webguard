@@ -20,7 +20,7 @@ router.post('/', async (req: Request, res: Response) => {
   const visitSource = src || source || '';
 
   try {
-    const isBotResult = await detectBot({
+    const { isBot, blockReason } = await detectBot({
       uflow: fd,
       ip: clientIp,
       ua: userAgent,
@@ -29,8 +29,12 @@ router.post('/', async (req: Request, res: Response) => {
       headers: req.headers,
     });
 
+    if (isBot === 0) {
+      res.setHeader('X-WebGuard-Block-Reason', blockReason || 'Unknown');
+    }
+
     // V1 compatibility: Return "1" (allow) or "0" (block) as a raw string
-    return res.send(isBotResult.toString());
+    return res.send(isBot.toString());
   } catch (err) {
     console.error('Bot detection API error:', err);
     // If it's a known expired sub or invalid uflow error, we can return the error text
