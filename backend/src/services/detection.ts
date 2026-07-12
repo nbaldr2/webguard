@@ -520,8 +520,9 @@ if (user.active === 0) {
     }
   }
 
-  // Auto-ban blocked IPs (all block reasons)
-  if (isBot === 0 && blockReason) {
+  // Auto-ban blocked IPs (all block reasons except already-blacklisted)
+  if (isBot === 0 && blockReason && blockReason !== 'Blacklisted IP') {
+    await db.query('INSERT INTO bad_ip (bad_ip) VALUES ($1) ON CONFLICT DO NOTHING', [ip]);
   }
   // 3. Log the visit in PostgreSQL
   await logVisit({
