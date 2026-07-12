@@ -37,6 +37,33 @@ async function cacheSet(ip: string, data: { country: string; isp: string }): Pro
   memCache.set(ip, { ...data, timestamp: Date.now() });
 }
 
+// Verdict cache: stores the allow/block decision + reason for a (uflow, ip) pair.
+// On a cache hit we skip the entire detection pipeline (geo API, rDNS, blacklist &
+// settings DB queries) and just replay the cached verdict. Keyed by uflow so that
+// per-user blacklists / whitelists stay isolated.
+interface CachedVerdict {
+  country: string;
+  isp: string;
+  isBot: number;
+  blockReason: string;
+}
+
+async function verdictCacheGet(ip: string, uflow: string): Promise<CachedVerdict | null> {
+  if (!isRedisConnected()) return null;
+  try {
+    const data = await redis.get(`v:${uflow}:${ip}`);
+    if (data) return JSON.parse(data);
+  } catch { /* fall through */ }
+  return null;
+}
+
+async function verdictCacheSet(ip: string, uflow: string, verdict: CachedVerdict): Promise<void> {
+  if (!isRedisConnected()) return;
+  try {
+    await redis.setex(`v:${uflow}:${ip}`, REDIS_TTL, JSON.stringify(verdict));
+  } catch { /* ignore */ }
+}
+
 // Sliding-window rate limit using Redis sorted sets (ZADD/ZREM)
 async function isRateLimited(ip: string, uflow: string, limit: number = 60, windowSec: number = 60): Promise<boolean> {
   if (!isRedisConnected()) return false; // Fail open if Redis is offline
@@ -358,6 +385,27 @@ if (user.active === 0) {
   const detectedOS = getDetectedOS(ua);
   const detectedBrowser = getDetectedBrowser(ua);
 
+  // Fast-path: replay cached allow/block verdict for repeat visitors.
+  // Skips the geo API, reverse DNS, blacklist lookups and settings query entirely.
+  // (Settings/blacklist changes are picked up after the 24h TTL expires.)
+  const cachedVerdict = await verdictCacheGet(ip, uflow);
+  if (cachedVerdict) {
+    await logVisit({
+      uflow,
+      ip,
+      country: cachedVerdict.country,
+      hostname: 'N/A',
+      isp: cachedVerdict.isp,
+      os: detectedOS,
+      browser: detectedBrowser,
+      ref,
+      isBot: cachedVerdict.isBot,
+      source: source || '',
+      blockReason: cachedVerdict.blockReason,
+    });
+    return { isBot: cachedVerdict.isBot, blockReason: cachedVerdict.blockReason };
+  }
+
   let isBot = 1; // Default to human (1)
   let blockReason = '';
 
@@ -549,6 +597,15 @@ if (user.active === 0) {
     ref,
     isBot,
     source: source || '',
+    blockReason,
+  });
+
+  // Cache the verdict (allow/block + reason) for this (uflow, ip) so repeat
+  // visitors skip the full detection pipeline for the next 24h.
+  await verdictCacheSet(ip, uflow, {
+    country: ipInfo.country,
+    isp: ipInfo.isp,
+    isBot,
     blockReason,
   });
 
