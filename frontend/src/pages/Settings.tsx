@@ -53,17 +53,19 @@ export const Settings: React.FC = () => {
   const loadSettings = async () => {
     if (!token) return;
     try {
-      const [cRes, sRes, bRes, rRes] = await Promise.all([
+      const [cRes, sRes, bRes, rRes, bcRes] = await Promise.all([
         fetch(`${API}/settings/countries`, { headers: { Authorization: `Bearer ${token}` } }),
         fetch(`${API}/settings/system`,    { headers: { Authorization: `Bearer ${token}` } }),
         fetch(`${API}/settings/browser`,   { headers: { Authorization: `Bearer ${token}` } }),
         fetch(`${API}/settings/ip-rules`,  { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${API}/settings/blocked-countries`, { headers: { Authorization: `Bearer ${token}` } }),
       ]);
-      const [cj, sj, bj, rj] = await Promise.all([cRes.json(), sRes.json(), bRes.json(), rRes.json()]);
+      const [cj, sj, bj, rj, bcj] = await Promise.all([cRes.json(), sRes.json(), bRes.json(), rRes.json(), bcRes.json()]);
       if (cj.status === 'success') setCountries(cj.allowedCountries);
       if (sj.status === 'success') { setSystems(sj.allowedSystems); setSystemOptions(sj.systemOptions); }
       if (bj.status === 'success') { setBrowsers(bj.allowedBrowsers); setBrowserOptions(bj.browserOptions); }
       if (rj.status === 'success') setBlacklists(rj.data);
+      if (bcj.status === 'success') setBlockedCountries(bcj.blockedCountries);
     } catch (err) { console.error('Failed to load settings:', err); }
   };
 
@@ -89,7 +91,7 @@ export const Settings: React.FC = () => {
     setCountries(updated); await saveCountries(updated);
   };
 
-  /* ── Blocked Countries ── */
+  /* ---- Blocked Countries ---- */
   const handleAddBlockedCountry = async (e: React.FormEvent) => {
     e.preventDefault();
     const code = newBlockedCountry.trim().toUpperCase();
@@ -105,13 +107,14 @@ export const Settings: React.FC = () => {
   };
   const saveBlockedCountries = async (list: string[]) => {
     try {
-      const res = await fetch(\`\${API}/settings/blocked-countries\`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: \`Bearer \${token}\` },
+      const res = await fetch(`${API}/settings/blocked-countries`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ countries: list }),
       });
       res.ok ? showMessage('success', 'Blocked countries updated') : showMessage('error', 'Failed to update blocked countries');
     } catch { showMessage('error', 'Network error'); }
   };
+
   const saveCountries = async (list: string[]) => {
     setSavingCountries(true);
     try {
@@ -165,7 +168,7 @@ export const Settings: React.FC = () => {
         body: JSON.stringify({ type, value: value.trim() }),
       });
       const data = await res.json();
-      if (res.ok && data.status === 'success') { setValue(''); showMessage('success', `${type.toUpperCase()} blocked`); loadSettings(); }
+      if (res.ok && data.status === 'success') { setValue(''); showMessage('success', type.toUpperCase() + ' blocked'); loadSettings(); }
       else showMessage('error', data.message || 'Failed to add rule');
     } catch { showMessage('error', 'Network error'); }
   };
@@ -196,7 +199,7 @@ export const Settings: React.FC = () => {
     display: 'flex', alignItems: 'center', gap: '0.65rem',
     padding: '0.5rem 0.75rem',
     background: active ? 'rgba(99,102,241,0.08)' : 'rgba(255,255,255,0.01)',
-    border: `1px solid ${active ? 'rgba(99,102,241,0.45)' : 'var(--border-color)'}`,
+    border: '1px solid ' + (active ? 'rgba(99,102,241,0.45)' : 'var(--border-color)'),
     borderRadius: '8px', cursor: 'pointer', transition: 'all 0.15s ease',
   });
 
@@ -216,7 +219,7 @@ export const Settings: React.FC = () => {
   return (
     <div>
       {message && (
-        <div className={`alert ${message.type === 'success' ? 'alert-success' : 'alert-error'}`}
+        <div className={'alert ' + (message.type === 'success' ? 'alert-success' : 'alert-error')}
           style={{ position: 'fixed', bottom: '2rem', right: '2rem', zIndex: 100, minWidth: '250px' }}>
           {message.text}
         </div>
@@ -247,6 +250,28 @@ export const Settings: React.FC = () => {
               </span>
             )) : (
               <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', padding: '0.25rem 0.5rem' }}>All countries allowed</span>
+            )}
+          </div>
+          <hr style={{ borderColor: 'var(--border-color)', margin: '1.5rem 0' }} />
+          <h2>Blocked Countries</h2>
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
+            Visitors from these countries are blocked immediately. Leave empty to allow all countries (whitelist still applies if set).
+          </p>
+          <form onSubmit={handleAddBlockedCountry} style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+            <input type="text" className="form-input" style={{ maxWidth: '120px' }}
+              placeholder="RU" maxLength={2} value={newBlockedCountry} onChange={e => setNewBlockedCountry(e.target.value)} />
+            <button type="submit" className="btn btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+              <Plus size={16} /> Block
+            </button>
+          </form>
+          <div className="tags-input-container" style={{ marginBottom: '2.5rem' }}>
+            {blockedCountries.length > 0 ? blockedCountries.map(code => (
+              <span key={code} className="tag-item" style={{ borderColor: 'rgba(244, 63, 94, 0.3)', background: 'rgba(244, 63, 94, 0.08)' }}>
+                <Globe size={12} />{code}
+                <button type="button" className="tag-remove" onClick={() => handleRemoveBlockedCountry(code)}>x</button>
+              </span>
+            )) : (
+              <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', padding: '0.25rem 0.5rem' }}>No blocked countries</span>
             )}
           </div>
 
@@ -332,7 +357,7 @@ export const Settings: React.FC = () => {
                 padding: '0.2rem 0.55rem', borderRadius: '999px',
                 background: blacklists.badIps.length > 0 ? 'rgba(239,68,68,0.15)' : 'rgba(255,255,255,0.06)',
                 color: blacklists.badIps.length > 0 ? '#f87171' : 'var(--text-muted)',
-                border: `1px solid ${blacklists.badIps.length > 0 ? 'rgba(239,68,68,0.3)' : 'var(--border-color)'}`,
+                border: '1px solid ' + (blacklists.badIps.length > 0 ? 'rgba(239,68,68,0.3)' : 'var(--border-color)'),
               }}>
                 {blacklists.badIps.length.toLocaleString()} entries
               </span>
@@ -365,7 +390,7 @@ export const Settings: React.FC = () => {
                 padding: '0.2rem 0.55rem', borderRadius: '999px',
                 background: blacklists.hostnames.length > 0 ? 'rgba(239,68,68,0.15)' : 'rgba(255,255,255,0.06)',
                 color: blacklists.hostnames.length > 0 ? '#f87171' : 'var(--text-muted)',
-                border: `1px solid ${blacklists.hostnames.length > 0 ? 'rgba(239,68,68,0.3)' : 'var(--border-color)'}`,
+                border: '1px solid ' + (blacklists.hostnames.length > 0 ? 'rgba(239,68,68,0.3)' : 'var(--border-color)'),
               }}>
                 {blacklists.hostnames.length.toLocaleString()} entries
               </span>
@@ -398,7 +423,7 @@ export const Settings: React.FC = () => {
                 padding: '0.2rem 0.55rem', borderRadius: '999px',
                 background: blacklists.isps.length > 0 ? 'rgba(239,68,68,0.15)' : 'rgba(255,255,255,0.06)',
                 color: blacklists.isps.length > 0 ? '#f87171' : 'var(--text-muted)',
-                border: `1px solid ${blacklists.isps.length > 0 ? 'rgba(239,68,68,0.3)' : 'var(--border-color)'}`,
+                border: '1px solid ' + (blacklists.isps.length > 0 ? 'rgba(239,68,68,0.3)' : 'var(--border-color)'),
               }}>
                 {blacklists.isps.length.toLocaleString()} entries
               </span>
