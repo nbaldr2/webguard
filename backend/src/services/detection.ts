@@ -429,7 +429,6 @@ if (user.active === 0) {
         if (!allowedSystems.includes(detectedOS.toLowerCase())) {
           isBot = 0;
           blockReason = 'OS not whitelisted';
-          await db.query('INSERT INTO bad_ip (bad_ip) VALUES ($1) ON CONFLICT DO NOTHING', [ip]);
         }
       } else {
         const systemRes = await db.query(
@@ -439,7 +438,6 @@ if (user.active === 0) {
         if (systemRes.rows.length === 0) {
           isBot = 0;
           blockReason = 'Unknown OS';
-          await db.query('INSERT INTO bad_ip (bad_ip) VALUES ($1) ON CONFLICT DO NOTHING', [ip]);
         }
       }
     }
@@ -519,10 +517,12 @@ if (user.active === 0) {
     } else if (isCloudProvider(ipInfo.isp) && isConsumerUA(ua)) {
       isBot = 0;
       blockReason = 'Cloud/Datacenter IP';
-      await db.query('INSERT INTO bad_ip (bad_ip) VALUES ($1) ON CONFLICT DO NOTHING', [ip]);
     }
   }
 
+  // Auto-ban blocked IPs (all block reasons)
+  if (isBot === 0 && blockReason) {
+  }
   // 3. Log the visit in PostgreSQL
   await logVisit({
     uflow,
