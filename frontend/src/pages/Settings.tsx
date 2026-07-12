@@ -28,6 +28,8 @@ export const Settings: React.FC = () => {
 
   const [countries, setCountries] = useState<string[]>([]);
   const [newCountry, setNewCountry] = useState('');
+  const [blockedCountries, setBlockedCountries] = useState<string[]>([]);
+  const [newBlockedCountry, setNewBlockedCountry] = useState('');
 
   const [systems, setSystems] = useState<string[]>([]);
   const [systemOptions, setSystemOptions] = useState<string[]>([]);
@@ -85,6 +87,30 @@ export const Settings: React.FC = () => {
   const handleRemoveCountry = async (code: string) => {
     const updated = countries.filter(c => c !== code);
     setCountries(updated); await saveCountries(updated);
+  };
+
+  /* ── Blocked Countries ── */
+  const handleAddBlockedCountry = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const code = newBlockedCountry.trim().toUpperCase();
+    if (code.length !== 2) { showMessage('error', 'Country code must be 2 letters (e.g. RU, CN)'); return; }
+    if (blockedCountries.includes(code)) { setNewBlockedCountry(''); return; }
+    const updated = [...blockedCountries, code];
+    setBlockedCountries(updated); setNewBlockedCountry('');
+    await saveBlockedCountries(updated);
+  };
+  const handleRemoveBlockedCountry = async (code: string) => {
+    const updated = blockedCountries.filter(c => c !== code);
+    setBlockedCountries(updated); await saveBlockedCountries(updated);
+  };
+  const saveBlockedCountries = async (list: string[]) => {
+    try {
+      const res = await fetch(\`\${API}/settings/blocked-countries\`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: \`Bearer \${token}\` },
+        body: JSON.stringify({ countries: list }),
+      });
+      res.ok ? showMessage('success', 'Blocked countries updated') : showMessage('error', 'Failed to update blocked countries');
+    } catch { showMessage('error', 'Network error'); }
   };
   const saveCountries = async (list: string[]) => {
     setSavingCountries(true);
@@ -213,7 +239,7 @@ export const Settings: React.FC = () => {
               <Plus size={16} /> Add
             </button>
           </form>
-          <div className="tags-input-container" style={{ marginBottom: '2.5rem' }}>
+          <div className="tags-input-container" style={{ marginBottom: '1rem' }}>
             {countries.length > 0 ? countries.map(code => (
               <span key={code} className="tag-item">
                 <Globe size={12} />{code}
@@ -221,6 +247,30 @@ export const Settings: React.FC = () => {
               </span>
             )) : (
               <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', padding: '0.25rem 0.5rem' }}>All countries allowed</span>
+            )}
+          </div>
+
+          {/* Blocked Countries */}
+          <hr style={{ borderColor: 'var(--border-color)', margin: '1.5rem 0' }} />
+          <h2>Blocked Countries</h2>
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
+            Visitors from these countries are blocked immediately. Leave empty to allow all countries (whitelist still applies).
+          </p>
+          <form onSubmit={handleAddBlockedCountry} style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+            <input type="text" className="form-input" style={{ maxWidth: '120px' }}
+              placeholder="RU" maxLength={2} value={newBlockedCountry} onChange={e => setNewBlockedCountry(e.target.value)} />
+            <button type="submit" className="btn btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+              <Plus size={16} /> Block
+            </button>
+          </form>
+          <div className="tags-input-container" style={{ marginBottom: '2.5rem' }}>
+            {blockedCountries.length > 0 ? blockedCountries.map(code => (
+              <span key={code} className="tag-item" style={{ borderColor: 'rgba(244, 63, 94, 0.3)', background: 'rgba(244, 63, 94, 0.08)' }}>
+                <Globe size={12} />{code}
+                <button type="button" className="tag-remove" onClick={() => handleRemoveBlockedCountry(code)}>&times;</button>
+              </span>
+            )) : (
+              <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', padding: '0.25rem 0.5rem' }}>No blocked countries</span>
             )}
           </div>
 

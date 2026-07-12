@@ -56,6 +56,53 @@ router.post('/countries', async (req: AuthenticatedRequest, res: Response) => {
   }
 });
 
+// Get Blocked Countries
+router.get('/blocked-countries', async (req: AuthenticatedRequest, res: Response) => {
+  const uflow = req.user?.uflow;
+  if (!uflow) return res.status(400).json({ status: 'error', message: 'No uflow in token' });
+
+  try {
+    const settingsRes = await db.query('SELECT blocked_countries FROM user_settings WHERE uflow = $1 LIMIT 1', [uflow]);
+    const blockedCountriesStr = settingsRes.rows[0]?.blocked_countries || '';
+    const blockedCountries = blockedCountriesStr
+      ? blockedCountriesStr.split(',').map((c: string) => c.trim().toUpperCase()).filter((c: string) => c.length > 0)
+      : [];
+    return res.json({ status: 'success', blockedCountries });
+  } catch (err) {
+    console.error('Get blocked countries error:', err);
+    return res.status(500).json({ status: 'error', message: 'Failed to fetch blocked countries' });
+  }
+});
+
+// Update Blocked Countries
+router.post('/blocked-countries', async (req: AuthenticatedRequest, res: Response) => {
+  const uflow = req.user?.uflow;
+  if (!uflow) return res.status(400).json({ status: 'error', message: 'No uflow in token' });
+
+  const { countries } = req.body;
+
+  if (!Array.isArray(countries)) {
+    return res.status(400).json({ status: 'error', message: 'Countries must be an array' });
+  }
+
+  try {
+    const countriesStr = countries.join(', ');
+
+    await db.query(
+      `INSERT INTO user_settings (uflow, blocked_countries)
+       VALUES ($1, $2)
+       ON CONFLICT (uflow) DO UPDATE SET blocked_countries = EXCLUDED.blocked_countries`,
+      [uflow, countriesStr]
+    );
+
+    return res.json({ status: 'success', message: 'Blocked countries updated successfully' });
+  } catch (err) {
+    console.error('Update blocked countries error:', err);
+    return res.status(500).json({ status: 'error', message: 'Failed to update blocked countries' });
+  }
+});
+
+
 // Get Whitelisted Operating Systems and global options
 router.get('/system', async (req: AuthenticatedRequest, res: Response) => {
   const uflow = req.user?.uflow;

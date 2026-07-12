@@ -363,10 +363,10 @@ if (user.active === 0) {
 
   // 2. Run Bot Detection Pipeline (fast checks first, expensive I/O deferred)
   const settingsRes = await db.query(
-    'SELECT countries, systems, browsers, rate_limit FROM user_settings WHERE uflow = $1 LIMIT 1',
+    'SELECT countries, systems, browsers, rate_limit, blocked_countries FROM user_settings WHERE uflow = $1 LIMIT 1',
     [uflow]
   );
-  const settings = settingsRes.rows[0] || { countries: '', systems: '', browsers: '', rate_limit: 120 };
+  const settings = settingsRes.rows[0] || { countries: '', systems: '', browsers: '', rate_limit: 120, blocked_countries: '' };
 
   // Immediate Crawler/Bot UA Check — no I/O needed
   if (isBot === 1 && isBotOrCrawlerUA(ua)) {
@@ -480,7 +480,7 @@ if (user.active === 0) {
     ipInfo = await getIPInfo(ip, uflow);
 
     // Country whitelist check
-    if (ipInfo.country !== 'N/A') {
+    if (isBot === 1 && ipInfo.country !== 'N/A') {
       if (settings.countries && settings.countries.trim().length > 0) {
         const allowedCountries = settings.countries
           .split(',')
@@ -488,6 +488,19 @@ if (user.active === 0) {
         if (!allowedCountries.includes(ipInfo.country.toUpperCase())) {
           isBot = 0;
           blockReason = 'Country not whitelisted';
+        }
+      }
+    }
+
+    // Blocked countries check (blacklist overrides whitelist)
+    if (isBot === 1 && ipInfo.country !== 'N/A') {
+      if (settings.blocked_countries && settings.blocked_countries.trim().length > 0) {
+        const blockedCountries = settings.blocked_countries
+          .split(',')
+          .map((c: string) => c.trim().toUpperCase());
+        if (blockedCountries.includes(ipInfo.country.toUpperCase())) {
+          isBot = 0;
+          blockReason = 'Blocked country';
         }
       }
     }
