@@ -275,30 +275,6 @@ export const Settings: React.FC = () => {
             )}
           </div>
 
-          {/* Blocked Countries */}
-          <hr style={{ borderColor: 'var(--border-color)', margin: '1.5rem 0' }} />
-          <h2>Blocked Countries</h2>
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-            Visitors from these countries are blocked immediately. Leave empty to allow all countries (whitelist still applies).
-          </p>
-          <form onSubmit={handleAddBlockedCountry} style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
-            <input type="text" className="form-input" style={{ maxWidth: '120px' }}
-              placeholder="RU" maxLength={2} value={newBlockedCountry} onChange={e => setNewBlockedCountry(e.target.value)} />
-            <button type="submit" className="btn btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-              <Plus size={16} /> Block
-            </button>
-          </form>
-          <div className="tags-input-container" style={{ marginBottom: '2.5rem' }}>
-            {blockedCountries.length > 0 ? blockedCountries.map(code => (
-              <span key={code} className="tag-item" style={{ borderColor: 'rgba(244, 63, 94, 0.3)', background: 'rgba(244, 63, 94, 0.08)' }}>
-                <Globe size={12} />{code}
-                <button type="button" className="tag-remove" onClick={() => handleRemoveBlockedCountry(code)}>&times;</button>
-              </span>
-            )) : (
-              <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', padding: '0.25rem 0.5rem' }}>No blocked countries</span>
-            )}
-          </div>
-
           {/* OS Whitelist */}
           {sectionHeader('Operating System Whitelist', savingSystems)}
           <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1.25rem' }}>
