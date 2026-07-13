@@ -6,13 +6,14 @@ import { Dashboard } from './pages/Dashboard';
 import { Settings } from './pages/Settings';
 import { General } from './pages/General';
 import { CodeGenerator } from './pages/CodeGenerator';
+import { History } from './pages/History';
 import { SignIn } from './pages/SignIn';
 import { SignUp } from './pages/SignUp';
 import { ShieldAlert, RefreshCw } from 'lucide-react';
 
 const MainAppContent: React.FC = () => {
   const { user, loading, token } = useAuth();
-  const [currentPage, setCurrentPage] = useState<'dashboard' | 'settings' | 'general' | 'code' | 'signin' | 'signup'>('signin');
+  const [currentPage, setCurrentPage] = useState<'dashboard' | 'settings' | 'general' | 'code' | 'history' | 'signin' | 'signup'>('signin');
 
   // Handle routing based on authentication status
   useEffect(() => {
@@ -67,6 +68,7 @@ const MainAppContent: React.FC = () => {
           {currentPage === 'settings' && <Settings />}
           {currentPage === 'general' && <General />}
           {currentPage === 'code' && <CodeGenerator />}
+          {currentPage === 'history' && <History />}
         </div>
       </main>
     </div>

@@ -264,4 +264,78 @@ router.post('/clear-visits', async (req: AuthenticatedRequest, res: Response) =>
   }
 });
 
+// Get filtered visits history with date range, search, and pagination
+router.post('/visits-history', async (req: AuthenticatedRequest, res: Response) => {
+  const uflow = req.user?.uflow;
+  if (!uflow) return res.status(400).json({ status: 'error', message: 'No uflow in token' });
+
+  const period = req.body.period || 'today';
+  const search = (req.body.search || '').trim();
+  const limit = Math.min(Math.max(parseInt(req.body.limit, 10) || 100, 1), 500);
+  const offset = Math.max(parseInt(req.body.offset, 10) || 0, 0);
+
+  let dateFilter: string;
+  switch (period) {
+    case 'yesterday':
+      dateFilter = `date >= CURRENT_DATE - INTERVAL '1 day' AND date < CURRENT_DATE`;
+      break;
+    case 'last3':
+      dateFilter = `date >= CURRENT_DATE - INTERVAL '2 days'`;
+      break;
+    case 'last7':
+      dateFilter = `date >= CURRENT_DATE - INTERVAL '6 days'`;
+      break;
+    case 'last30':
+      dateFilter = `date >= CURRENT_DATE - INTERVAL '29 days'`;
+      break;
+    case 'today':
+    default:
+      dateFilter = `date >= CURRENT_DATE`;
+      break;
+  }
+
+  try {
+    const searchClause = search
+      ? `AND (v.ip ILIKE $4 OR v.country ILIKE $4 OR v.hostname ILIKE $4 OR v.isp ILIKE $4
+              OR v.system ILIKE $4 OR v.browser ILIKE $4 OR v.block_reason ILIKE $4
+              OR v.referee ILIKE $4 OR v.source ILIKE $4)`
+      : '';
+
+    const countSql = `
+      SELECT COUNT(*) as total FROM visits v
+      WHERE v.uflow = $1 AND ${dateFilter} ${searchClause}`;
+
+    const querySql = `
+      SELECT
+        v.id, v.ip, v.country, v.hostname, v.isp,
+        v.system as os, v.browser, v.referee, v.date,
+        v.isbot, v.source, v.block_reason as blockReason,
+        EXISTS(SELECT 1 FROM bad_ip b WHERE v.ip = b.bad_ip OR v.ip LIKE REPLACE(b.bad_ip, '*', '%')) as is_banned
+      FROM visits v
+      WHERE v.uflow = $1 AND ${dateFilter} ${searchClause}
+      ORDER BY v.date DESC
+      LIMIT $2 OFFSET $3`;
+
+    const params: any[] = [uflow, limit, offset];
+    if (search) params.push(`%${search}%`);
+
+    const [countRes, visitsRes] = await Promise.all([
+      db.query(countSql, search ? [uflow, limit, offset, `%${search}%`] : [uflow, limit, offset]),
+      db.query(querySql, search ? [uflow, limit, offset, `%${search}%`] : [uflow, limit, offset]),
+    ]);
+
+    const total = parseInt(countRes.rows[0].total, 10);
+
+    return res.json({
+      status: 'success',
+      data: visitsRes.rows.map(row => ({ ...row, date: row.date.toISOString() })),
+      total,
+      hasMore: offset + limit < total,
+    });
+  } catch (err) {
+    console.error('Visits history error:', err);
+    return res.status(500).json({ status: 'error', message: 'Failed to fetch visits history' });
+  }
+});
+
 export default router;

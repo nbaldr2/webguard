@@ -1,6 +1,6 @@
 import React from 'react';
 import { useAuth } from '../context/AuthContext';
-import { LayoutDashboard, Code, ShieldAlert, LogOut, ShieldCheck, ShieldX, Settings2 } from 'lucide-react';
+import { LayoutDashboard, Code, ShieldAlert, LogOut, ShieldCheck, ShieldX, Settings2, Clock } from 'lucide-react';
 
 interface SidebarProps {
   currentPage: string;
@@ -30,6 +30,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentPage, setCurrentPage })
           <button onClick={() => setCurrentPage('dashboard')}>
             <LayoutDashboard size={20} />
             Dashboard
+          </button>
+        </li>
+        <li className={`nav-item ${currentPage === 'history' ? 'active' : ''}`}>
+          <button onClick={() => setCurrentPage('history')}>
+            <Clock size={20} />
+            Visit History
           </button>
         </li>
         <li className={`nav-item ${currentPage === 'settings' ? 'active' : ''}`}>
