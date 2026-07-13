@@ -317,15 +317,13 @@ async function isIPBad(ip: string, uflow: string): Promise<boolean> {
   return dbRes.rows.length > 0;
 }
 
-// Check if hostname exactly matches a blacklisted pattern (supporting uflow segmentation)
-// Uses exact match so residential rDNS hostnames (e.g. subs.proxad.net) are NOT
-// blocked by short substring patterns.
+// Check if hostname matches blacklisted pattern (supporting uflow segmentation)
 async function isHostnameBad(hostname: string, uflow: string): Promise<boolean> {
   if (hostname === 'N/A' || !hostname) return false;
   const dbRes = await db.query(
     `SELECT 1 FROM hostname 
      WHERE (uflow IS NULL OR uflow = $2) 
-       AND $1 = hostname
+       AND $1 ILIKE CONCAT('%', hostname, '%') 
      LIMIT 1`,
     [hostname, uflow]
   );
