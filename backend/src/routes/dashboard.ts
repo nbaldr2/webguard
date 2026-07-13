@@ -316,12 +316,16 @@ router.post('/visits-history', async (req: AuthenticatedRequest, res: Response) 
       ORDER BY v.date DESC
       LIMIT $2 OFFSET $3`;
 
-    const params: any[] = [uflow, limit, offset];
-    if (search) params.push(`%${search}%`);
+    const baseCountParams: any[] = [uflow];
+    const baseQueryParams: any[] = [uflow, limit, offset];
+    if (search) {
+      baseCountParams.push(`%${search}%`);
+      baseQueryParams.push(`%${search}%`);
+    }
 
     const [countRes, visitsRes] = await Promise.all([
-      db.query(countSql, search ? [uflow, limit, offset, `%${search}%`] : [uflow, limit, offset]),
-      db.query(querySql, search ? [uflow, limit, offset, `%${search}%`] : [uflow, limit, offset]),
+      db.query(countSql, baseCountParams),
+      db.query(querySql, baseQueryParams),
     ]);
 
     const total = parseInt(countRes.rows[0].total, 10);
