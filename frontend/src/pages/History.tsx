@@ -16,6 +16,12 @@ const PERIODS = [
   { key: 'last30', label: 'Last 30 Days' },
 ];
 
+const TYPES = [
+  { key: 'all', label: 'All' },
+  { key: 'allowed', label: 'Allowed' },
+  { key: 'blocked', label: 'Blocked' },
+];
+
 export const History: React.FC = () => {
   const { token } = useAuth();
   const [visits, setVisits] = useState<Visit[]>([]);
@@ -24,6 +30,7 @@ export const History: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [period, setPeriod] = useState('today');
+  const [filterType, setFilterType] = useState('all');
   const [search, setSearch] = useState('');
   const [searchInput, setSearchInput] = useState('');
 
@@ -37,7 +44,7 @@ export const History: React.FC = () => {
       const res = await fetch(`${API_BASE_URL}/dashboard/visits-history`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ period, search, limit: PAGE_SIZE, offset }),
+        body: JSON.stringify({ period, search, type: filterType, limit: PAGE_SIZE, offset }),
       });
       const json = await res.json();
       if (json.status === 'success') {
@@ -48,7 +55,7 @@ export const History: React.FC = () => {
       }
     } catch (err) { console.error(err); }
     finally { setLoading(false); setLoadingMore(false); }
-  }, [token, period, search]);
+  }, [token, period, search, filterType]);
 
   useEffect(() => { fetchHistory(0, false); }, [fetchHistory]);
 
@@ -64,7 +71,7 @@ export const History: React.FC = () => {
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ type: 'ip', value: ip }),
     });
-    fetchHistory(0, false);
+    setVisits(prev => prev.map(v => v.ip === ip ? { ...v, is_banned: true } : v));
   };
 
   const handleUnbanIP = async (ip: string) => {
@@ -73,7 +80,7 @@ export const History: React.FC = () => {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${token}` },
     });
-    fetchHistory(0, false);
+    setVisits(prev => prev.map(v => v.ip === ip ? { ...v, is_banned: false } : v));
   };
 
   return (
@@ -84,28 +91,42 @@ export const History: React.FC = () => {
         </div>
 
         {/* Filters */}
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', padding: '0 1rem 1rem', alignItems: 'center' }}>
-          <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
-            {PERIODS.map(p => (
-              <button key={p.key}
-                className={`btn ${period === p.key ? 'btn-primary' : 'btn-secondary'}`}
-                onClick={() => setPeriod(p.key)}
-                style={{ padding: '0.35rem 0.7rem', fontSize: '0.8rem' }}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', padding: '0 1rem 1rem' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center' }}>
+            <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
+              {PERIODS.map(p => (
+                <button key={p.key}
+                  className={`btn ${period === p.key ? 'btn-primary' : 'btn-secondary'}`}
+                  onClick={() => setPeriod(p.key)}
+                  style={{ padding: '0.35rem 0.7rem', fontSize: '0.8rem' }}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+
+            <form onSubmit={handleSearch} style={{ display: 'flex', gap: '0.35rem', marginLeft: 'auto' }}>
+              <input type="text" className="form-input" placeholder="Search IP, country, hostname, ISP..."
+                value={searchInput} onChange={e => setSearchInput(e.target.value)}
+                style={{ width: '220px', fontSize: '0.8rem', padding: '0.35rem 0.6rem' }}
+              />
+              <button type="submit" className="btn btn-primary" style={{ padding: '0.35rem 0.6rem' }}>
+                <Search size={14} />
+              </button>
+            </form>
+          </div>
+
+          <div style={{ display: 'flex', gap: '0.35rem' }}>
+            {TYPES.map(t => (
+              <button key={t.key}
+                className={`btn ${filterType === t.key ? 'btn-primary' : 'btn-secondary'}`}
+                onClick={() => setFilterType(t.key)}
+                style={{ padding: '0.3rem 0.6rem', fontSize: '0.75rem' }}
               >
-                {p.label}
+                {t.label}
               </button>
             ))}
           </div>
-
-          <form onSubmit={handleSearch} style={{ display: 'flex', gap: '0.35rem', marginLeft: 'auto' }}>
-            <input type="text" className="form-input" placeholder="Search IP, country, hostname, ISP..."
-              value={searchInput} onChange={e => setSearchInput(e.target.value)}
-              style={{ width: '220px', fontSize: '0.8rem', padding: '0.35rem 0.6rem' }}
-            />
-            <button type="submit" className="btn btn-primary" style={{ padding: '0.35rem 0.6rem' }}>
-              <Search size={14} />
-            </button>
-          </form>
         </div>
 
         {/* Table */}

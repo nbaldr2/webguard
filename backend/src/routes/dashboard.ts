@@ -271,6 +271,7 @@ router.post('/visits-history', async (req: AuthenticatedRequest, res: Response) 
 
   const period = req.body.period || 'today';
   const search = (req.body.search || '').trim();
+  const filterType = req.body.type || 'all';
   const limit = Math.min(Math.max(parseInt(req.body.limit, 10) || 100, 1), 500);
   const offset = Math.max(parseInt(req.body.offset, 10) || 0, 0);
 
@@ -294,6 +295,10 @@ router.post('/visits-history', async (req: AuthenticatedRequest, res: Response) 
       break;
   }
 
+  let typeClause = '';
+  if (filterType === 'allowed') typeClause = 'AND v.isbot = 1';
+  else if (filterType === 'blocked') typeClause = 'AND v.isbot = 0';
+
   try {
     const searchClause = search
       ? `AND (v.ip ILIKE $4 OR v.country ILIKE $4 OR v.hostname ILIKE $4 OR v.isp ILIKE $4
@@ -303,7 +308,7 @@ router.post('/visits-history', async (req: AuthenticatedRequest, res: Response) 
 
     const countSql = `
       SELECT COUNT(*) as total FROM visits v
-      WHERE v.uflow = $1 AND ${dateFilter} ${searchClause}`;
+      WHERE v.uflow = $1 AND ${dateFilter} ${typeClause} ${searchClause}`;
 
     const querySql = `
       SELECT
@@ -312,7 +317,7 @@ router.post('/visits-history', async (req: AuthenticatedRequest, res: Response) 
         v.isbot, v.source, v.block_reason as blockReason,
         EXISTS(SELECT 1 FROM bad_ip b WHERE v.ip = b.bad_ip OR v.ip LIKE REPLACE(b.bad_ip, '*', '%')) as is_banned
       FROM visits v
-      WHERE v.uflow = $1 AND ${dateFilter} ${searchClause}
+      WHERE v.uflow = $1 AND ${dateFilter} ${typeClause} ${searchClause}
       ORDER BY v.date DESC
       LIMIT $2 OFFSET $3`;
 
