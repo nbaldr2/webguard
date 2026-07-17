@@ -5,8 +5,8 @@ import redis, { isRedisConnected } from '../redis';
 
 // Fallback in-memory cache when Redis is unavailable
 const memCache = new Map<string, { country: string; isp: string; timestamp: number }>();
-const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
-const REDIS_TTL = 60 * 60 * 24 * 3; // 3 days in seconds for Redis
+const CACHE_TTL = 3 * 24 * 60 * 60 * 1000; // 3 days (ms)
+const REDIS_TTL = 60 * 60 * 24 * 3; // 3 days in seconds
 
 interface IPInfo {
   country: string;
