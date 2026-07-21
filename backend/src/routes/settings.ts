@@ -427,4 +427,63 @@ router.delete('/ip-providers/:id', async (req: AuthenticatedRequest, res: Respon
   }
 });
 
+// ── Organizations ──
+
+// List all blocked organizations
+router.get('/organizations', async (req: AuthenticatedRequest, res: Response) => {
+  const uflow = req.user?.uflow;
+  if (!uflow) return res.status(400).json({ status: 'error', message: 'No uflow in token' });
+
+  try {
+    const result = await db.query(
+      'SELECT id, name FROM organizations WHERE uflow IS NULL OR uflow = $1 ORDER BY name ASC',
+      [uflow]
+    );
+    return res.json({ status: 'success', data: result.rows });
+  } catch (err) {
+    console.error('Get organizations error:', err);
+    return res.status(500).json({ status: 'error', message: 'Failed to fetch organizations' });
+  }
+});
+
+// Add a blocked organization
+router.post('/organizations', async (req: AuthenticatedRequest, res: Response) => {
+  const uflow = req.user?.uflow;
+  const { name } = req.body;
+  if (!uflow) return res.status(400).json({ status: 'error', message: 'No uflow in token' });
+  if (!name || !name.trim()) return res.status(400).json({ status: 'error', message: 'Organization name is required' });
+
+  try {
+    const result = await db.query(
+      'INSERT INTO organizations (name) VALUES ($1) ON CONFLICT DO NOTHING RETURNING id, name',
+      [name.trim()]
+    );
+    if (result.rows.length === 0) {
+      return res.status(409).json({ status: 'error', message: 'Organization already exists' });
+    }
+    return res.json({ status: 'success', data: result.rows[0] });
+  } catch (err) {
+    console.error('Add organization error:', err);
+    return res.status(500).json({ status: 'error', message: 'Failed to add organization' });
+  }
+});
+
+// Remove a blocked organization
+router.delete('/organizations/:id', async (req: AuthenticatedRequest, res: Response) => {
+  const uflow = req.user?.uflow;
+  const { id } = req.params;
+  if (!uflow) return res.status(400).json({ status: 'error', message: 'No uflow in token' });
+
+  try {
+    const result = await db.query('DELETE FROM organizations WHERE id = $1', [id]);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ status: 'error', message: 'Organization not found' });
+    }
+    return res.json({ status: 'success', message: 'Organization removed' });
+  } catch (err) {
+    console.error('Delete organization error:', err);
+    return res.status(500).json({ status: 'error', message: 'Failed to delete organization' });
+  }
+});
+
 export default router;

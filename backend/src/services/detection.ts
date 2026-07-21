@@ -343,6 +343,19 @@ async function isISPBad(isp: string, uflow: string): Promise<boolean> {
   return dbRes.rows.length > 0;
 }
 
+// Check if ISP exactly matches a blocked organization name
+async function isOrganizationBad(isp: string, uflow: string): Promise<boolean> {
+  if (isp === 'N/A' || !isp) return false;
+  const dbRes = await db.query(
+    `SELECT 1 FROM organizations 
+     WHERE (uflow IS NULL OR uflow = $2) 
+       AND $1 = name
+     LIMIT 1`,
+    [isp, uflow]
+  );
+  return dbRes.rows.length > 0;
+}
+
 // Enhanced detection engine pipeline
 export async function detectBot(params: {
   uflow: string;
@@ -575,6 +588,9 @@ if (user.active === 0) {
     } else if (await isISPBad(ipInfo.isp, uflow)) {
       isBot = 0;
       blockReason = 'Blacklisted ISP';
+    } else if (await isOrganizationBad(ipInfo.isp, uflow)) {
+      isBot = 0;
+      blockReason = 'Blocked organization';
     } else if (isCloudProvider(ipInfo.isp) && isConsumerUA(ua)) {
       isBot = 0;
       blockReason = 'Cloud/Datacenter IP';
