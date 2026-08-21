@@ -264,7 +264,28 @@ router.post('/clear-visits', async (req: AuthenticatedRequest, res: Response) =>
   }
 });
 
-// Get filtered visits history with date range, search, and pagination
+// Get the available non-empty visit sources for the authenticated user.
+router.post('/visit-sources', async (req: AuthenticatedRequest, res: Response) => {
+  const uflow = req.user?.uflow;
+  if (!uflow) return res.status(400).json({ status: 'error', message: 'No uflow in token' });
+
+  try {
+    const result = await db.query(
+      `SELECT DISTINCT source
+       FROM visits
+       WHERE uflow = $1 AND source IS NOT NULL AND TRIM(source) <> ''
+       ORDER BY source ASC`,
+      [uflow]
+    );
+
+    return res.json({ status: 'success', data: result.rows.map(row => row.source) });
+  } catch (err) {
+    console.error('Visit sources error:', err);
+    return res.status(500).json({ status: 'error', message: 'Failed to fetch visit sources' });
+  }
+});
+
+// Get filtered visits history with date range, search, source, and pagination
 router.post('/visits-history', async (req: AuthenticatedRequest, res: Response) => {
   const uflow = req.user?.uflow;
   if (!uflow) return res.status(400).json({ status: 'error', message: 'No uflow in token' });
@@ -272,6 +293,7 @@ router.post('/visits-history', async (req: AuthenticatedRequest, res: Response) 
   const period = req.body.period || 'today';
   const search = (req.body.search || '').trim();
   const filterType = req.body.type || 'all';
+  const source = (req.body.source || '').trim();
   const limit = Math.min(Math.max(parseInt(req.body.limit, 10) || 100, 1), 500);
   const offset = Math.max(parseInt(req.body.offset, 10) || 0, 0);
 
@@ -295,20 +317,35 @@ router.post('/visits-history', async (req: AuthenticatedRequest, res: Response) 
       break;
   }
 
-  let typeClause = '';
-  if (filterType === 'allowed') typeClause = 'AND v.isbot = 1';
-  else if (filterType === 'blocked') typeClause = 'AND v.isbot = 0';
-
   try {
-    const searchClause = search
-      ? `AND (v.ip ILIKE $4 OR v.country ILIKE $4 OR v.hostname ILIKE $4 OR v.isp ILIKE $4
-              OR v.system ILIKE $4 OR v.browser ILIKE $4 OR v.block_reason ILIKE $4
-              OR v.referee ILIKE $4 OR v.source ILIKE $4)`
-      : '';
+    const whereClauses = [`v.uflow = $1`, dateFilter];
+    const filterParams: unknown[] = [uflow];
+
+    if (filterType === 'allowed') whereClauses.push('v.isbot = 1');
+    else if (filterType === 'blocked') whereClauses.push('v.isbot = 0');
+
+    if (source) {
+      filterParams.push(source);
+      whereClauses.push(`v.source = $${filterParams.length}`);
+    }
+
+    if (search) {
+      filterParams.push(`%${search}%`);
+      const searchParam = `$${filterParams.length}`;
+      whereClauses.push(`(
+        v.ip ILIKE ${searchParam} OR v.country ILIKE ${searchParam} OR v.hostname ILIKE ${searchParam}
+        OR v.isp ILIKE ${searchParam} OR v.system ILIKE ${searchParam} OR v.browser ILIKE ${searchParam}
+        OR v.block_reason ILIKE ${searchParam} OR v.referee ILIKE ${searchParam} OR v.source ILIKE ${searchParam}
+      )`);
+    }
+
+    const whereSql = whereClauses.join(' AND ');
+    const limitParam = `$${filterParams.length + 1}`;
+    const offsetParam = `$${filterParams.length + 2}`;
 
     const countSql = `
       SELECT COUNT(*) as total FROM visits v
-      WHERE v.uflow = $1 AND ${dateFilter} ${typeClause} ${searchClause}`;
+      WHERE ${whereSql}`;
 
     const querySql = `
       SELECT
@@ -317,20 +354,15 @@ router.post('/visits-history', async (req: AuthenticatedRequest, res: Response) 
         v.isbot, v.source, v.block_reason as blockReason,
         EXISTS(SELECT 1 FROM bad_ip b WHERE v.ip = b.bad_ip OR v.ip LIKE REPLACE(b.bad_ip, '*', '%')) as is_banned
       FROM visits v
-      WHERE v.uflow = $1 AND ${dateFilter} ${typeClause} ${searchClause}
+      WHERE ${whereSql}
       ORDER BY v.date DESC
-      LIMIT $2 OFFSET $3`;
+      LIMIT ${limitParam} OFFSET ${offsetParam}`;
 
-    const baseCountParams: any[] = [uflow];
-    const baseQueryParams: any[] = [uflow, limit, offset];
-    if (search) {
-      baseCountParams.push(`%${search}%`);
-      baseQueryParams.push(`%${search}%`);
-    }
+    const queryParams = [...filterParams, limit, offset];
 
     const [countRes, visitsRes] = await Promise.all([
-      db.query(countSql, baseCountParams),
-      db.query(querySql, baseQueryParams),
+      db.query(countSql, filterParams),
+      db.query(querySql, queryParams),
     ]);
 
     const total = parseInt(countRes.rows[0].total, 10);

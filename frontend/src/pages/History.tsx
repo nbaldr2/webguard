@@ -33,6 +33,8 @@ export const History: React.FC = () => {
   const [filterType, setFilterType] = useState('all');
   const [search, setSearch] = useState('');
   const [searchInput, setSearchInput] = useState('');
+  const [selectedSource, setSelectedSource] = useState('');
+  const [sources, setSources] = useState<string[]>([]);
 
   const API_BASE_URL = '/api';
   const PAGE_SIZE = 100;
@@ -44,7 +46,14 @@ export const History: React.FC = () => {
       const res = await fetch(`${API_BASE_URL}/dashboard/visits-history`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ period, search, type: filterType, limit: PAGE_SIZE, offset }),
+        body: JSON.stringify({
+          period,
+          search,
+          type: filterType,
+          source: selectedSource,
+          limit: PAGE_SIZE,
+          offset,
+        }),
       });
       const json = await res.json();
       if (json.status === 'success') {
@@ -55,9 +64,31 @@ export const History: React.FC = () => {
       }
     } catch (err) { console.error(err); }
     finally { setLoading(false); setLoadingMore(false); }
-  }, [token, period, search, filterType]);
+  }, [token, period, search, filterType, selectedSource]);
 
   useEffect(() => { fetchHistory(0, false); }, [fetchHistory]);
+
+  useEffect(() => {
+    if (!token) {
+      setSources([]);
+      return;
+    }
+
+    const fetchSources = async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/dashboard/visit-sources`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        });
+        const json = await res.json();
+        if (json.status === 'success') setSources(json.data);
+      } catch (err) {
+        console.error('Error fetching visit sources:', err);
+      }
+    };
+
+    fetchSources();
+  }, [token]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -105,15 +136,29 @@ export const History: React.FC = () => {
               ))}
             </div>
 
-            <form onSubmit={handleSearch} style={{ display: 'flex', gap: '0.35rem', marginLeft: 'auto' }}>
-              <input type="text" className="form-input" placeholder="Search IP, country, hostname, ISP..."
-                value={searchInput} onChange={e => setSearchInput(e.target.value)}
-                style={{ width: '220px', fontSize: '0.8rem', padding: '0.35rem 0.6rem' }}
-              />
-              <button type="submit" className="btn btn-primary" style={{ padding: '0.35rem 0.6rem' }}>
-                <Search size={14} />
-              </button>
-            </form>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', marginLeft: 'auto' }}>
+              <form onSubmit={handleSearch} style={{ display: 'flex', gap: '0.35rem' }}>
+                <input type="text" className="form-input" placeholder="Search IP, country, hostname, ISP..."
+                  value={searchInput} onChange={e => setSearchInput(e.target.value)}
+                  style={{ width: '220px', fontSize: '0.8rem', padding: '0.35rem 0.6rem' }}
+                />
+                <button type="submit" className="btn btn-primary" style={{ padding: '0.35rem 0.6rem' }}>
+                  <Search size={14} />
+                </button>
+              </form>
+              <select
+                className="form-input"
+                value={selectedSource}
+                onChange={e => setSelectedSource(e.target.value)}
+                aria-label="Filter history by source"
+                style={{ width: '100%', fontSize: '0.8rem', padding: '0.35rem 0.6rem' }}
+              >
+                <option value="">All sources</option>
+                {sources.map(source => (
+                  <option key={source} value={source}>{source}</option>
+                ))}
+              </select>
+            </div>
           </div>
 
           <div style={{ display: 'flex', gap: '0.35rem' }}>
