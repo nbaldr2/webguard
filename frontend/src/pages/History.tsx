@@ -205,7 +205,10 @@ export const History: React.FC = () => {
                         })}
                       </td>
                       <td>
-                        <span className="visit-ip">{v.ip}</span>
+                        <a href={`https://ipinfo.io/${v.ip}`} target="_blank" rel="noopener noreferrer"
+                          className="visit-ip" style={{ textDecoration: 'none', cursor: 'pointer', color: 'inherit' }}
+                          onClick={e => e.stopPropagation()}
+                        >{v.ip}</a>
                         {v.hostname && v.hostname !== 'N/A' && v.hostname !== v.ip && (
                           <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                             {v.hostname}
