@@ -517,7 +517,10 @@ export const Dashboard: React.FC = () => {
                         {new Date(visit.date).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                       </td>
                       <td>
-                        <span className="visit-ip">{visit.ip}</span>
+                        <a href={`https://ipinfo.io/${visit.ip}`} target="_blank" rel="noopener noreferrer"
+                            className="visit-ip" style={{ textDecoration: 'none', cursor: 'pointer', color: 'inherit' }}
+                            onClick={e => e.stopPropagation()}
+                          >{visit.ip}</a>
                         {visit.hostname && visit.hostname !== 'N/A' && visit.hostname !== visit.ip && (
                           <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                             {visit.hostname}
