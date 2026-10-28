@@ -1,5 +1,6 @@
 import { Router, Response } from 'express';
 import { db } from '../db';
+import redis from '../redis';
 import { authMiddleware, AuthenticatedRequest } from '../middleware/auth';
 
 const router = Router();
@@ -261,6 +262,33 @@ router.post('/clear-visits', async (req: AuthenticatedRequest, res: Response) =>
   } catch (err) {
     console.error('Clear visits error:', err);
     return res.status(500).json({ status: 'error', message: 'Failed to clear visits' });
+  }
+});
+
+// Clear verdict cache for this user
+router.post('/clear-cache', async (req: AuthenticatedRequest, res: Response) => {
+  const uflow = req.user?.uflow;
+  if (!uflow) return res.status(400).json({ status: 'error', message: 'No uflow in token' });
+
+  try {
+    // ioredis SCAN doesn't add keyPrefix to MATCH pattern, and doesn't strip it from results.
+    // Use the full prefixed pattern and strip the prefix manually before del().
+    let cursor = '0';
+    let count = 0;
+    do {
+      const result: [string, string[]] = await (redis as any).scan(cursor, 'MATCH', `wg:v:${uflow}:*`, 'COUNT', 500);
+      cursor = result[0];
+      const keys = result[1];
+      if (keys.length > 0) {
+        const unprefixed = keys.map((k: string) => k.replace(/^wg:/, ''));
+        await redis.del(...unprefixed);
+        count += unprefixed.length;
+      }
+    } while (cursor !== '0');
+    return res.json({ status: 'success', message: `Cleared ${count} cached verdicts` });
+  } catch (err) {
+    console.error('Clear cache error:', err);
+    return res.status(500).json({ status: 'error', message: 'Failed to clear cache' });
   }
 });
 

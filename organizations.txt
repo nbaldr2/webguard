@@ -1,3 +1,10 @@
+# Blocked Organizations - Comprehensive List
+# One organization name per line
+# Lines starting with # are comments
+
+# ============================================
+# VPN PROVIDERS (Major & Popular)
+# ============================================
 NordVPN
 ExpressVPN
 Surfshark
@@ -54,6 +61,10 @@ Unlimited VPN
 Fast VPN
 Secure VPN
 Shield VPN
+
+# ============================================
+# CLOUD HOSTING & VPS PROVIDERS
+# ============================================
 DigitalOcean
 Digital Ocean
 Amazon
@@ -91,11 +102,7 @@ Hostinger
 Namecheap
 1&1 IONOS
 Liquid Web
-Red Cientifica Peruana
-Dataport AoR
 WP Engine
-Tiscali Italia SpA
-Microsoft Limited
 Kinsta
 Cloudways
 ServerMania
@@ -147,26 +154,18 @@ Lebara Ltd
 AS14593 Space Exploration Technologies Corporation
 Space Exploration Technologies Corporation
 AS14593
-YouTube, LLC
-LLC KOMTEHCENTR FTTB Customers
-VISPERAD NETWORKS, LLC
 Clouvider
-PenTeleData House Account
-Localhost
-Summit Broadband
-ColoUp
-World Class Incentive
-Nobis Technology Group, LLC
-Selectel
 ennit server GmbH
-OARnet
+
+# ============================================
+# DATACENTER & HOSTING COMPANIES
+# ============================================
 Choopa
 QuadraNet
 ColoCrossing
 Psychz Networks
 Sharktech
 Wholesale Internet
-OARnet
 Cogent Communications
 Level 3
 Hurricane Electric
@@ -190,9 +189,15 @@ Telehouse
 Colt
 Telstra
 PCCW Global
+China Telecom
 China Unicom
 Rostelecom
 Bezeq
+Verizon Business
+
+# ============================================
+# PROXY & ANONYMIZATION SERVICES
+# ============================================
 iCloud Private Relay
 Opera Mini Proxy
 Cloudflare WARP
@@ -221,6 +226,10 @@ Anonymous Proxy
 Web Proxy
 HTTP Proxy
 SOCKS Proxy
+
+# ============================================
+# SECURITY & SCANNING SERVICES
+# ============================================
 Palo Alto Networks
 Fortinet
 Zscaler
@@ -285,6 +294,10 @@ MalwareDomainList
 Emerging Threats
 Snort
 Suricata
+
+# ============================================
+# BOT NETWORKS & SCRAPING SERVICES
+# ============================================
 Bright Data
 Luminati
 Oxylabs
@@ -323,6 +336,23 @@ Visual Web Ripper
 Screen Scraper
 Dexi.io
 CloudScrape
+
+# ============================================
+# MOBILE CARRIERS (OPTIONAL - Uncomment if needed)
+# ============================================
+# T-Mobile
+# AT&T
+# Verizon Wireless
+# Sprint
+# Vodafone Mobile
+# Orange Mobile
+# Telefonica Mobile
+# China Mobile
+# China Unicom Mobile
+
+# ============================================
+# RESIDENTIAL PROXY PROVIDERS
+# ============================================
 Residential Proxy
 Mobile Proxy
 4G Proxy
@@ -337,6 +367,10 @@ IPRoyal Pawns
 Peer2Proxy
 EarnApp
 Traffmonetizer
+
+# ============================================
+# ADDITIONAL SUSPICIOUS ORGANIZATIONS
+# ============================================
 Tor Project
 I2P
 Freenet

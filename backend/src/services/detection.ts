@@ -317,6 +317,40 @@ async function isIPBad(ip: string, uflow: string): Promise<boolean> {
   return dbRes.rows.length > 0;
 }
 
+// Check if IP is in the white_ip table (supporting CIDR subnets, wildcards, and uflow segmentation)
+export async function isIPWhitelisted(ip: string, uflow: string): Promise<boolean> {
+  const isIPValid = net.isIP(ip) !== 0;
+
+  let psqlQuery = '';
+  let params: any[] = [];
+
+  if (isIPValid) {
+    psqlQuery = `
+      SELECT 1 FROM white_ip
+      WHERE (uflow IS NULL OR uflow = $2) AND (
+         $1 = ip
+         OR $1 LIKE REPLACE(ip, '*', '%')
+         OR (ip LIKE '%/%' AND $1::inet << ip::cidr)
+      )
+      LIMIT 1
+    `;
+    params = [ip, uflow];
+  } else {
+    psqlQuery = `
+      SELECT 1 FROM white_ip
+      WHERE (uflow IS NULL OR uflow = $2) AND (
+         $1 = ip
+         OR $1 LIKE REPLACE(ip, '*', '%')
+      )
+      LIMIT 1
+    `;
+    params = [ip, uflow];
+  }
+
+  const dbRes = await db.query(psqlQuery, params);
+  return dbRes.rows.length > 0;
+}
+
 // Check if hostname matches blacklisted pattern (supporting uflow segmentation)
 async function isHostnameBad(hostname: string, uflow: string): Promise<boolean> {
   if (hostname === 'N/A' || !hostname) return false;
@@ -343,17 +377,435 @@ async function isISPBad(isp: string, uflow: string): Promise<boolean> {
   return dbRes.rows.length > 0;
 }
 
-// Check if ISP exactly matches a blocked organization name
+// Check if ISP matches a blocked organization name (case-insensitive exact match)
 async function isOrganizationBad(isp: string, uflow: string): Promise<boolean> {
   if (isp === 'N/A' || !isp) return false;
   const dbRes = await db.query(
     `SELECT 1 FROM organizations 
      WHERE (uflow IS NULL OR uflow = $2) 
-       AND $1 = name
+       AND $1 ILIKE name
      LIMIT 1`,
     [isp, uflow]
   );
   return dbRes.rows.length > 0;
+}
+
+// Extract nested field value from JSON object using dot notation
+function extractNestedField(obj: any, path: string): any {
+  if (!path) return null;
+  const parts = path.split('.');
+  let value = obj;
+  for (const part of parts) {
+    if (value == null || typeof value !== 'object') return null;
+    value = value[part];
+  }
+  return value;
+}
+
+// Check if referrer matches a blacklisted pattern
+async function isReferrerBad(ref: string, uflow: string): Promise<boolean> {
+  if (!ref || ref === '') return false;
+  const dbRes = await db.query(
+    `SELECT 1 FROM referrer_blacklist 
+     WHERE uflow = $1 
+       AND $2 ILIKE CONCAT('%', pattern, '%')
+     LIMIT 1`,
+    [uflow, ref]
+  );
+  return dbRes.rows.length > 0;
+}
+
+// Check if IP is a VPN/proxy/hosting/datacenter using configured intel providers
+// All provider API calls run in parallel with a 5-second timeout per provider.
+// Returns the block reason if detected, or empty string if clean.
+async function checkIntelProviders(ip: string, uflow: string): Promise<string> {
+  try {
+    const settingsRes = await db.query(
+      'SELECT vpn_detection_enabled FROM user_settings WHERE uflow = $1',
+      [uflow]
+    );
+    if (settingsRes.rows[0]?.vpn_detection_enabled === 0) return '';
+
+    const providers = await db.query(
+      `SELECT id, name, url_template, api_key, method, is_proxy, is_vpn, is_hosting, is_datacenter, is_residential
+       FROM intel_providers WHERE uflow = $1 AND enabled = true ORDER BY sort_order ASC, id ASC`,
+      [uflow]
+    );
+
+    if (providers.rows.length === 0) return '';
+
+    // Run all provider checks in parallel with a 5-second timeout per provider
+    const results = await Promise.all(providers.rows.map(async (provider) => {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 5000);
+
+        let url = provider.url_template.replace(/\{ip\}/g, ip).replace(/\{key\}/g, provider.api_key || '');
+        let data: any;
+
+        if (provider.method === 'POST') {
+          // POST providers (e.g. sntlhq) are unreliable for server-side IP checking
+          // They auto-detect the caller IP, ignoring the target IP. Skip them.
+          clearTimeout(timeout);
+          return null;
+        } else {
+          const res = await fetch(url, { signal: controller.signal });
+          clearTimeout(timeout);
+          if (!res.ok) return null;
+          data = await res.json();
+        }
+
+        // Check residential flag — if the IP is a residential proxy, skip it (legitimate user)
+        const residentialVal = extractNestedField(data, provider.is_residential);
+        if (residentialVal === true || residentialVal === 1 || residentialVal === 'true' || residentialVal === 'yes') {
+          return null;
+        }
+
+        const proxyVal = extractNestedField(data, provider.is_proxy);
+        const vpnVal = extractNestedField(data, provider.is_vpn);
+        const hostingVal = extractNestedField(data, provider.is_hosting);
+        const dchVal = extractNestedField(data, provider.is_datacenter);
+
+        const isTruthy = (v: any): boolean => {
+          if (v === true || v === 1) return true;
+          if (typeof v === 'string') {
+            const lower = v.toLowerCase();
+            return lower === 'true' || lower === 'yes' || lower === 'vpn' || lower === 'proxy' || lower === 'dch' || lower === 'hosting';
+          }
+          return false;
+        };
+
+        if (isTruthy(proxyVal)) return `Proxy/VPN detected (${provider.name})`;
+        if (isTruthy(vpnVal)) return `Proxy/VPN detected (${provider.name})`;
+        if (dchVal && isTruthy(dchVal)) return `Datacenter IP detected (${provider.name})`;
+        if (hostingVal && (isTruthy(hostingVal) || hostingVal === 'DCH')) return `Hosting/Cloud detected (${provider.name})`;
+      } catch {
+        // Timeout or network error — skip this provider
+      }
+      return null;
+    }));
+
+    // Return the first positive result
+    for (const result of results) {
+      if (result) return result;
+    }
+  } catch {
+    // DB error, skip intel check
+  }
+  return '';
+}
+
+// Check IP against proxycheck.io API with automatic key rotation and daily quota tracking
+// Uses Redis counters per key (reset automatically at midnight via TTL)
+async function checkProxycheck(ip: string, uflow: string): Promise<string> {
+  try {
+    const settingsRes = await db.query(
+      'SELECT proxycheck_enabled FROM user_settings WHERE uflow = $1',
+      [uflow]
+    );
+    if (settingsRes.rows[0]?.proxycheck_enabled === 0) return '';
+
+    const keys = await db.query(
+      'SELECT id, api_key, daily_quota FROM proxycheck_keys WHERE enabled = true ORDER BY id ASC'
+    );
+    if (keys.rows.length === 0) return '';
+
+    const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+
+    for (const key of keys.rows) {
+      const quotaKey = `proxycheck:${key.api_key}:${today}`;
+      try {
+        const usedStr = await redis.get(quotaKey);
+        const used = parseInt(usedStr || '0', 10);
+        if (used >= key.daily_quota) continue;
+
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 5000);
+
+        const url = `https://proxycheck.io/v2/${ip}?key=${key.api_key}&vpn=1`;
+        const res = await fetch(url, { signal: controller.signal });
+        clearTimeout(timeout);
+        if (!res.ok) continue;
+
+        await redis.incr(quotaKey);
+        await redis.expire(quotaKey, 86400);
+
+        const data: any = await res.json();
+        if (data.status !== 'ok') continue;
+
+        const ipData = data[ip];
+        if (!ipData) continue;
+
+        const isProxy = ipData.proxy === 'yes';
+        const proxyType = (ipData.type || '').toLowerCase();
+
+        if (isProxy && (proxyType === 'vpn' || proxyType === 'proxy')) return `Proxy/VPN detected (proxycheck.io)`;
+        if (proxyType === 'hosting' || proxyType === 'host' || proxyType === 'dc') return `Hosting/Cloud detected (proxycheck.io)`;
+      } catch {
+        continue;
+      }
+    }
+  } catch {
+    // DB error, skip proxycheck
+  }
+  return '';
+}
+
+// Check IP against abuseipdb.com API with automatic key rotation and daily quota tracking
+async function checkAbuseIPDB(ip: string, uflow: string): Promise<string> {
+  try {
+    const settingsRes = await db.query(
+      'SELECT abuseipdb_enabled FROM user_settings WHERE uflow = $1',
+      [uflow]
+    );
+    if (settingsRes.rows[0]?.abuseipdb_enabled === 0) return '';
+
+    const keys = await db.query(
+      'SELECT id, api_key, daily_quota FROM abuseipdb_keys WHERE enabled = true ORDER BY id ASC'
+    );
+    if (keys.rows.length === 0) return '';
+
+    const today = new Date().toISOString().slice(0, 10);
+
+    for (const key of keys.rows) {
+      const quotaKey = `abuseipdb:${key.api_key}:${today}`;
+      try {
+        const usedStr = await redis.get(quotaKey);
+        const used = parseInt(usedStr || '0', 10);
+        if (used >= key.daily_quota) continue;
+
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 5000);
+
+        const res = await fetch(`https://api.abuseipdb.com/api/v2/check?ipAddress=${ip}&maxAgeInDays=90`, {
+          headers: { 'Key': key.api_key, 'Accept': 'application/json' },
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
+        if (!res.ok) {
+          // 429 = quota exceeded, skip this key
+          if (res.status === 429) {
+            await redis.set(quotaKey, String(key.daily_quota), 'EX', 86400);
+          }
+          continue;
+        }
+
+        await redis.incr(quotaKey);
+        await redis.expire(quotaKey, 86400);
+
+        const data: any = await res.json();
+        const d = data?.data;
+        if (!d) continue;
+
+        const score = d.abuseConfidenceScore || 0;
+        const usageType = (d.usageType || '').toLowerCase();
+        const isTor = d.isTor === true;
+
+        if (isTor) return `Tor detected (abuseipdb)`;
+        if (score >= 25) return `Abuse IP detected (abuseipdb)`;
+        if (usageType.includes('data center') || usageType.includes('hosting') || usageType.includes('transit')) return `Hosting/Cloud detected (abuseipdb)`;
+      } catch {
+        continue;
+      }
+    }
+  } catch {
+    // DB error, skip abuseipdb
+  }
+  return '';
+}
+
+// Check IP against vpnapi.io API with automatic key rotation and daily quota tracking
+async function checkVPNapi(ip: string, uflow: string): Promise<string> {
+  try {
+    const settingsRes = await db.query(
+      'SELECT vpnapi_enabled FROM user_settings WHERE uflow = $1',
+      [uflow]
+    );
+    if (settingsRes.rows[0]?.vpnapi_enabled === 0) return '';
+
+    const keys = await db.query(
+      'SELECT id, api_key, daily_quota FROM vpnapi_keys WHERE enabled = true ORDER BY id ASC'
+    );
+    if (keys.rows.length === 0) return '';
+
+    const today = new Date().toISOString().slice(0, 10);
+
+    for (const key of keys.rows) {
+      const quotaKey = `vpnapi:${key.api_key}:${today}`;
+      try {
+        const usedStr = await redis.get(quotaKey);
+        const used = parseInt(usedStr || '0', 10);
+        if (used >= key.daily_quota) continue;
+
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 5000);
+
+        const res = await fetch(`https://vpnapi.io/api/${ip}?key=${key.api_key}`, {
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
+        if (!res.ok) continue;
+
+        await redis.incr(quotaKey);
+        await redis.expire(quotaKey, 86400);
+
+        const data: any = await res.json();
+        const security = data?.security;
+        if (!security) continue;
+
+        if (security.tor === true) return `Tor detected (vpnapi.io)`;
+        if (security.vpn === true) return `VPN detected (vpnapi.io)`;
+        if (security.proxy === true) return `Proxy detected (vpnapi.io)`;
+        if (security.relay === true) return `Relay detected (vpnapi.io)`;
+      } catch {
+        continue;
+      }
+    }
+  } catch {
+    // DB error, skip vpnapi
+  }
+  return '';
+}
+
+// Check IP against iplocate.io API with automatic key rotation and daily quota tracking
+async function checkIPLocate(ip: string, uflow: string): Promise<string> {
+  try {
+    const settingsRes = await db.query(
+      'SELECT iplocate_enabled FROM user_settings WHERE uflow = $1',
+      [uflow]
+    );
+    if (settingsRes.rows[0]?.iplocate_enabled === 0) return '';
+
+    const keys = await db.query(
+      'SELECT id, api_key, daily_quota FROM iplocate_keys WHERE enabled = true ORDER BY id ASC'
+    );
+    if (keys.rows.length === 0) return '';
+
+    const today = new Date().toISOString().slice(0, 10);
+
+    for (const key of keys.rows) {
+      const quotaKey = `iplocate:${key.api_key}:${today}`;
+      try {
+        const usedStr = await redis.get(quotaKey);
+        const used = parseInt(usedStr || '0', 10);
+        if (used >= key.daily_quota) continue;
+
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 5000);
+
+        const res = await fetch(`https://iplocate.io/api/lookup/${ip}?apikey=${key.api_key}`, {
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
+        if (!res.ok) continue;
+
+        await redis.incr(quotaKey);
+        await redis.expire(quotaKey, 86400);
+
+        const data: any = await res.json();
+        const privacy = data?.privacy;
+        if (!privacy) continue;
+
+        if (privacy.is_abuser === true) return 'IPLocate ip abuser';
+        if (privacy.is_anonymous === true) return 'IPLocate ip anonymous';
+        if (privacy.is_bogon === true) return 'IPLocate ip bogon';
+        if (privacy.is_hosting === true) return 'IPLocate ip hosting';
+        if (privacy.is_icloud_relay === true) return 'IPLocate ip icloud relay';
+        if (privacy.is_proxy === true) return 'IPLocate ip proxy';
+        if (privacy.is_tor === true) return 'IPLocate ip tor';
+        if (privacy.is_vpn === true) return 'IPLocate ip vpn';
+      } catch {
+        continue;
+      }
+    }
+  } catch {
+    // DB error, skip iplocate
+  }
+  return '';
+}
+
+// Seconds remaining until the start of the next month (for monthly quota TTLs)
+function secondsUntilNextMonth(): number {
+  const now = new Date();
+  const next = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  return Math.max(60, Math.floor((next.getTime() - now.getTime()) / 1000));
+}
+
+// Check IP against fraudlogix.com with monthly key rotation (1000 req/month per key).
+// Blocks when the RiskScore is High/Extreme, or when the risk is Low/Medium but the
+// IP is flagged as Proxy, VPN, TOR, DataCenter, or MaskedDevices (AbnormalTraffic and
+// SearchEngineBot are ignored). If all keys fail or are exhausted, the whole step is
+// skipped until the 1st of the next month.
+async function checkFraudLogix(ip: string, uflow: string): Promise<string> {
+  try {
+    const settingsRes = await db.query(
+      'SELECT fraudlogix_enabled FROM user_settings WHERE uflow = $1',
+      [uflow]
+    );
+    if (settingsRes.rows[0]?.fraudlogix_enabled === 0) return '';
+
+    const today = new Date();
+    const month = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+    const ttl = secondsUntilNextMonth();
+
+    const skipKey = `fraudlogix:skip:${month}`;
+    const skip = await redis.get(skipKey);
+    if (skip) return '';
+
+    const keys = await db.query(
+      'SELECT id, api_key, monthly_quota FROM fraudlogix_keys WHERE enabled = true ORDER BY id ASC'
+    );
+    if (keys.rows.length === 0) return '';
+
+    let anySuccess = false;
+
+    for (const key of keys.rows) {
+      const quotaKey = `fraudlogix:${key.api_key}:${month}`;
+      try {
+        const usedStr = await redis.get(quotaKey);
+        const used = parseInt(usedStr || '0', 10);
+        if (used >= key.monthly_quota) continue;
+
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 5000);
+
+        const res = await fetch(`https://iplist.fraudlogix.com/v5?ip=${ip}`, {
+          headers: { 'x-api-key': key.api_key, 'Content-Type': 'application/json' },
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
+        if (!res.ok) continue;
+
+        anySuccess = true;
+        await redis.incr(quotaKey);
+        await redis.expire(quotaKey, ttl);
+
+        const data: any = await res.json();
+        const risk = String(data?.RiskScore || '').toLowerCase();
+        if (risk === 'high' || risk === 'extreme') {
+          return `FraudLogix risk ${data.RiskScore}`;
+        }
+        if (risk === 'low' || risk === 'medium') {
+          if (data?.Proxy === true) return 'FraudLogix - Proxy';
+          if (data?.VPN === true) return 'FraudLogix - VPN';
+          if (data?.TOR === true) return 'FraudLogix - TOR';
+          if (data?.DataCenter === true) return 'FraudLogix - DataCenter';
+          if (data?.MaskedDevices === true) return 'FraudLogix - MaskedDevices';
+        }
+        return '';
+      } catch {
+        continue;
+      }
+    }
+
+    // Every key either exhausted or failed — skip this step until next month
+    if (!anySuccess) {
+      try { await redis.set(skipKey, '1', 'EX', ttl); } catch {}
+    }
+  } catch {
+    // DB error, skip fraudlogix
+  }
+  return '';
 }
 
 // Enhanced detection engine pipeline
@@ -398,37 +850,89 @@ if (user.active === 0) {
   const detectedOS = getDetectedOS(ua);
   const detectedBrowser = getDetectedBrowser(ua);
 
-  // Fast-path: replay cached allow/block verdict for repeat visitors.
-  // Skips the geo API, reverse DNS, blacklist lookups and settings query entirely.
-  // (Settings/blacklist changes are picked up after the 24h TTL expires.)
-  const cachedVerdict = await verdictCacheGet(ip, uflow);
-  if (cachedVerdict) {
+  // IP allowlist fast-path: explicitly whitelisted IPs bypass the entire detection pipeline
+  // (blacklists, geo rules, intel providers, and the verdict cache) and are always allowed.
+  if (await isIPWhitelisted(ip, uflow)) {
+    const wlInfo = await getIPInfo(ip, uflow);
     await logVisit({
       uflow,
       ip,
-      country: cachedVerdict.country,
+      country: wlInfo.country,
       hostname: 'N/A',
-      isp: cachedVerdict.isp,
+      isp: wlInfo.isp,
       os: detectedOS,
       browser: detectedBrowser,
       ref,
-      isBot: cachedVerdict.isBot,
+      isBot: 1,
       source: source || '',
-      blockReason: cachedVerdict.blockReason,
+      blockReason: '',
     });
-    return { isBot: cachedVerdict.isBot, blockReason: cachedVerdict.blockReason };
+    await verdictCacheSet(ip, uflow, { country: wlInfo.country, isp: wlInfo.isp, isBot: 1, blockReason: '' });
+    return { isBot: 1, blockReason: '' };
   }
 
-  let isBot = 1; // Default to human (1)
-  let blockReason = '';
-
-  // 2. Run Bot Detection Pipeline (fast checks first, expensive I/O deferred)
+  // 2. Fetch settings (lightweight DB query, needed for both cache validation and pipeline)
   const settingsRes = await db.query(
     'SELECT countries, systems, browsers, rate_limit, blocked_countries FROM user_settings WHERE uflow = $1 LIMIT 1',
     [uflow]
   );
   const settings = settingsRes.rows[0] || { countries: '', systems: '', browsers: '', rate_limit: 120, blocked_countries: '' };
 
+  // Fast-path: replay cached verdict for repeat visitors ONLY if the fast checks
+  // (OS, browser, country whitelist, blocked countries) still agree with the cached decision.
+  // If settings changed since the cache was written, the cache is invalidated and we
+  // fall through to the full detection pipeline.
+  const cachedVerdict = await verdictCacheGet(ip, uflow);
+  if (cachedVerdict) {
+    let cacheStale = false;
+
+    // OS check
+    const osOk = (() => {
+      if (detectedOS === 'Unknown OS') return false;
+      if (settings.systems && settings.systems.trim().length > 0) {
+        const allowed = settings.systems.split(',').map((s: string) => s.trim().toLowerCase());
+        return allowed.includes(detectedOS.toLowerCase());
+      }
+      return true;
+    })();
+
+    // Browser check
+    const browserOk = (() => {
+      if (detectedBrowser === 'Unknown Browser') return false;
+      if (settings.browsers && settings.browsers.trim().length > 0) {
+        const allowed = settings.browsers.split(',').map((b: string) => b.trim().toLowerCase());
+        return allowed.includes(detectedBrowser.toLowerCase());
+      }
+      return true;
+    })();
+
+    if (!osOk || !browserOk) {
+      // Settings changed — cached verdict is stale
+      cacheStale = true;
+    }
+
+    if (!cacheStale) {
+      await logVisit({
+        uflow,
+        ip,
+        country: cachedVerdict.country,
+        hostname: 'N/A',
+        isp: cachedVerdict.isp,
+        os: detectedOS,
+        browser: detectedBrowser,
+        ref,
+        isBot: cachedVerdict.isBot,
+        source: source || '',
+        blockReason: cachedVerdict.blockReason,
+      });
+      return { isBot: cachedVerdict.isBot, blockReason: cachedVerdict.blockReason };
+    }
+  }
+
+  let isBot = 1; // Default to human (1)
+  let blockReason = '';
+
+  // Continue with full detection pipeline from the start (after settings fetch)
   // Immediate Crawler/Bot UA Check — no I/O needed
   if (isBot === 1 && isBotOrCrawlerUA(ua)) {
     isBot = 0;
@@ -449,6 +953,12 @@ if (user.active === 0) {
   if (isBot === 1 && await isRateLimited(ip, uflow, settings.rate_limit || 120)) {
     isBot = 0;
     blockReason = 'Rate limit exceeded';
+  }
+
+  // Referrer Blacklist check — no I/O needed (fast ILIKE query)
+  if (isBot === 1 && ref && await isReferrerBad(ref, uflow)) {
+    isBot = 0;
+    blockReason = 'Blocked referrer';
   }
 
 
@@ -541,12 +1051,9 @@ if (user.active === 0) {
     ipInfo = await getIPInfo(ip, uflow);
 
     // Country whitelist check
-    if (isBot === 1 && ipInfo.country !== 'N/A') {
+    if (isBot === 1) {
       if (settings.countries && settings.countries.trim().length > 0) {
-        const allowedCountries = settings.countries
-          .split(',')
-          .map((c: string) => c.trim().toUpperCase());
-        if (!allowedCountries.includes(ipInfo.country.toUpperCase())) {
+        if (ipInfo.country === 'N/A' || !settings.countries.split(',').map((c: string) => c.trim().toUpperCase()).includes(ipInfo.country.toUpperCase())) {
           isBot = 0;
           blockReason = 'Country not whitelisted';
         }
@@ -594,6 +1101,54 @@ if (user.active === 0) {
     } else if (isCloudProvider(ipInfo.isp) && isConsumerUA(ua)) {
       isBot = 0;
       blockReason = 'Cloud/Datacenter IP';
+    }
+  }
+
+  // AbuseIPDB check (abuse reports, Tor, hosting with automatic key rotation and daily quota)
+  if (isBot === 1) {
+    blockReason = await checkAbuseIPDB(ip, uflow);
+    if (blockReason) {
+      isBot = 0;
+    }
+  }
+
+  // IPLocate check (geolocation + privacy/threat flags with key rotation and daily quota)
+  if (isBot === 1) {
+    blockReason = await checkIPLocate(ip, uflow);
+    if (blockReason) {
+      isBot = 0;
+    }
+  }
+
+  // Intel provider check (VPN/proxy/hosting/datacenter detection via external APIs)
+  if (isBot === 1) {
+    blockReason = await checkIntelProviders(ip, uflow);
+    if (blockReason) {
+      isBot = 0;
+    }
+  }
+
+  // Proxycheck.io check (VPN/proxy/hosting with automatic key rotation and daily quota)
+  if (isBot === 1) {
+    blockReason = await checkProxycheck(ip, uflow);
+    if (blockReason) {
+      isBot = 0;
+    }
+  }
+
+  // VPNapi.io check (VPN/proxy/Tor/relay with automatic key rotation and daily quota)
+  if (isBot === 1) {
+    blockReason = await checkVPNapi(ip, uflow);
+    if (blockReason) {
+      isBot = 0;
+    }
+  }
+
+  // FraudLogix check (High/Extreme risk or Proxy/VPN/TOR/DataCenter/MaskedDevices flags with monthly key rotation, 1K req/month per key)
+  if (isBot === 1) {
+    blockReason = await checkFraudLogix(ip, uflow);
+    if (blockReason) {
+      isBot = 0;
     }
   }
 

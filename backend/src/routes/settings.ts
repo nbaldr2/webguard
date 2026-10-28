@@ -1,8 +1,17 @@
 import { Router, Response } from 'express';
 import { db } from '../db';
+import redis from '../redis';
 import { authMiddleware, AuthenticatedRequest } from '../middleware/auth';
 
 const router = Router();
+
+// Flush all verdict cache entries for a uflow
+async function flushVerdictCache(uflow: string): Promise<void> {
+  try {
+    const keys = await redis.keys(`v:${uflow}:*`);
+    if (keys.length > 0) await redis.del(...keys);
+  } catch {}
+}
 
 // Protect all settings routes
 router.use(authMiddleware);
@@ -49,6 +58,7 @@ router.post('/countries', async (req: AuthenticatedRequest, res: Response) => {
       [uflow, countriesStr]
     );
 
+    await flushVerdictCache(uflow);
     return res.json({ status: 'success', message: 'Country whitelist updated successfully' });
   } catch (err) {
     console.error('Update countries error:', err);
@@ -95,6 +105,7 @@ router.post('/blocked-countries', async (req: AuthenticatedRequest, res: Respons
       [uflow, countriesStr]
     );
 
+    await flushVerdictCache(uflow);
     return res.json({ status: 'success', message: 'Blocked countries updated successfully' });
   } catch (err) {
     console.error('Update blocked countries error:', err);
@@ -149,6 +160,7 @@ router.post('/system', async (req: AuthenticatedRequest, res: Response) => {
       [uflow, systemsStr]
     );
 
+    await flushVerdictCache(uflow);
     return res.json({ status: 'success', message: 'Operating system whitelist updated successfully' });
   } catch (err) {
     console.error('Update systems error:', err);
@@ -202,6 +214,7 @@ router.post('/browser', async (req: AuthenticatedRequest, res: Response) => {
       [uflow, browsersStr]
     );
 
+    await flushVerdictCache(uflow);
     return res.json({ status: 'success', message: 'Browser whitelist updated successfully' });
   } catch (err) {
     console.error('Update browsers error:', err);
@@ -275,6 +288,7 @@ router.post('/ip-rules', async (req: AuthenticatedRequest, res: Response) => {
   try {
     if (type === 'ip') {
       await db.query('INSERT INTO bad_ip (bad_ip) VALUES ($1) ON CONFLICT DO NOTHING', [cleanValue]);
+      try { await redis.del(`v:${req.user!.uflow}:${cleanValue}`); } catch {}
     } else if (type === 'hostname') {
       await db.query('INSERT INTO hostname (hostname) VALUES ($1) ON CONFLICT DO NOTHING', [cleanValue]);
     } else if (type === 'isp') {
@@ -322,6 +336,7 @@ router.delete('/ip-rules/ip/by-value/:ip', async (req: AuthenticatedRequest, res
   const { ip } = req.params;
   try {
     const result = await db.query('DELETE FROM bad_ip WHERE bad_ip = $1', [ip]);
+    try { await redis.del(`v:${req.user!.uflow}:${ip}`); } catch {}
     return res.json({
       status: 'success',
       message: 'IP removed from blacklist',
@@ -483,6 +498,400 @@ router.delete('/organizations/:id', async (req: AuthenticatedRequest, res: Respo
   } catch (err) {
     console.error('Delete organization error:', err);
     return res.status(500).json({ status: 'error', message: 'Failed to delete organization' });
+  }
+});
+
+// ── IP Intelligence Providers ──
+
+// List all intel providers
+router.get('/intel-providers', async (req: AuthenticatedRequest, res: Response) => {
+  const uflow = req.user?.uflow;
+  if (!uflow) return res.status(400).json({ status: 'error', message: 'No uflow in token' });
+
+  try {
+    const result = await db.query(
+      'SELECT id, name, url_template, api_key, method, enabled, sort_order, is_proxy, is_vpn, is_hosting, is_datacenter, is_residential FROM intel_providers WHERE uflow = $1 ORDER BY sort_order ASC, id ASC',
+      [uflow]
+    );
+    return res.json({ status: 'success', data: result.rows });
+  } catch (err) {
+    console.error('Get intel providers error:', err);
+    return res.status(500).json({ status: 'error', message: 'Failed to fetch intel providers' });
+  }
+});
+
+// Add an intel provider
+router.post('/intel-providers', async (req: AuthenticatedRequest, res: Response) => {
+  const uflow = req.user?.uflow;
+  const { name, url_template, api_key, method, is_proxy, is_vpn, is_hosting, is_datacenter } = req.body;
+  if (!uflow) return res.status(400).json({ status: 'error', message: 'No uflow in token' });
+  if (!name || !url_template) return res.status(400).json({ status: 'error', message: 'Name and URL template are required' });
+
+  try {
+    const result = await db.query(
+      `INSERT INTO intel_providers (uflow, name, url_template, api_key, method, is_proxy, is_vpn, is_hosting, is_datacenter, is_residential)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       ON CONFLICT (uflow, name) DO UPDATE SET
+         url_template = EXCLUDED.url_template, api_key = EXCLUDED.api_key, method = EXCLUDED.method,
+         is_proxy = EXCLUDED.is_proxy, is_vpn = EXCLUDED.is_vpn, is_hosting = EXCLUDED.is_hosting, is_datacenter = EXCLUDED.is_datacenter, is_residential = EXCLUDED.is_residential
+       RETURNING id, name, url_template, api_key, method, enabled, sort_order, is_proxy, is_vpn, is_hosting, is_datacenter, is_residential`,
+      [uflow, name.trim(), url_template.trim(), api_key || '', method || 'GET', is_proxy || '', is_vpn || '', is_hosting || '', is_datacenter || '', '']
+    );
+    return res.json({ status: 'success', data: result.rows[0] });
+  } catch (err) {
+    console.error('Add intel provider error:', err);
+    return res.status(500).json({ status: 'error', message: 'Failed to add intel provider' });
+  }
+});
+
+// Toggle intel provider enabled
+router.put('/intel-providers/:id/toggle', async (req: AuthenticatedRequest, res: Response) => {
+  const uflow = req.user?.uflow;
+  const { id } = req.params;
+  if (!uflow) return res.status(400).json({ status: 'error', message: 'No uflow in token' });
+
+  try {
+    const result = await db.query(
+      'UPDATE intel_providers SET enabled = NOT enabled WHERE id = $1 AND uflow = $2 RETURNING id, name, enabled',
+      [id, uflow]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ status: 'error', message: 'Provider not found' });
+    return res.json({ status: 'success', data: result.rows[0] });
+  } catch (err) {
+    console.error('Toggle intel provider error:', err);
+    return res.status(500).json({ status: 'error', message: 'Failed to toggle intel provider' });
+  }
+});
+
+// Delete an intel provider
+router.delete('/intel-providers/:id', async (req: AuthenticatedRequest, res: Response) => {
+  const uflow = req.user?.uflow;
+  const { id } = req.params;
+  if (!uflow) return res.status(400).json({ status: 'error', message: 'No uflow in token' });
+
+  try {
+    const result = await db.query('DELETE FROM intel_providers WHERE id = $1 AND uflow = $2', [id, uflow]);
+    if (result.rowCount === 0) return res.status(404).json({ status: 'error', message: 'Provider not found' });
+    return res.json({ status: 'success', message: 'Provider removed' });
+  } catch (err) {
+    console.error('Delete intel provider error:', err);
+    return res.status(500).json({ status: 'error', message: 'Failed to delete intel provider' });
+  }
+});
+
+// ── VPN Detection Toggle ──
+
+router.get('/vpn-detection', async (req: AuthenticatedRequest, res: Response) => {
+  const uflow = req.user?.uflow;
+  if (!uflow) return res.status(400).json({ status: 'error', message: 'No uflow in token' });
+
+  try {
+    const result = await db.query('SELECT vpn_detection_enabled FROM user_settings WHERE uflow = $1', [uflow]);
+    return res.json({ status: 'success', enabled: result.rows[0]?.vpn_detection_enabled !== 0 });
+  } catch (err) {
+    console.error('Get VPN detection error:', err);
+    return res.status(500).json({ status: 'error', message: 'Failed to fetch VPN detection setting' });
+  }
+});
+
+router.put('/vpn-detection', async (req: AuthenticatedRequest, res: Response) => {
+  const uflow = req.user?.uflow;
+  const { enabled } = req.body;
+  if (!uflow) return res.status(400).json({ status: 'error', message: 'No uflow in token' });
+
+  try {
+    await db.query(
+      `INSERT INTO user_settings (uflow, vpn_detection_enabled) VALUES ($1, $2)
+       ON CONFLICT (uflow) DO UPDATE SET vpn_detection_enabled = EXCLUDED.vpn_detection_enabled`,
+      [uflow, enabled ? 1 : 0]
+    );
+    return res.json({ status: 'success', enabled: !!enabled });
+  } catch (err) {
+    console.error('Update VPN detection error:', err);
+    return res.status(500).json({ status: 'error', message: 'Failed to update VPN detection setting' });
+  }
+});
+
+// ── Proxycheck.io Toggle ──
+
+router.get('/proxycheck', async (req: AuthenticatedRequest, res: Response) => {
+  const uflow = req.user?.uflow;
+  if (!uflow) return res.status(400).json({ status: 'error', message: 'No uflow in token' });
+  try {
+    const result = await db.query('SELECT proxycheck_enabled FROM user_settings WHERE uflow = $1', [uflow]);
+    return res.json({ status: 'success', enabled: result.rows[0]?.proxycheck_enabled !== 0 });
+  } catch (err) {
+    console.error('Get proxycheck error:', err);
+    return res.status(500).json({ status: 'error', message: 'Failed to fetch proxycheck setting' });
+  }
+});
+
+router.put('/proxycheck', async (req: AuthenticatedRequest, res: Response) => {
+  const uflow = req.user?.uflow;
+  const { enabled } = req.body;
+  if (!uflow) return res.status(400).json({ status: 'error', message: 'No uflow in token' });
+  try {
+    await db.query(
+      `INSERT INTO user_settings (uflow, proxycheck_enabled) VALUES ($1, $2)
+       ON CONFLICT (uflow) DO UPDATE SET proxycheck_enabled = EXCLUDED.proxycheck_enabled`,
+      [uflow, enabled ? 1 : 0]
+    );
+    return res.json({ status: 'success', enabled: !!enabled });
+  } catch (err) {
+    console.error('Update proxycheck error:', err);
+    return res.status(500).json({ status: 'error', message: 'Failed to update proxycheck setting' });
+  }
+});
+
+// ── AbuseIPDB Toggle ──
+
+router.get('/abuseipdb', async (req: AuthenticatedRequest, res: Response) => {
+  const uflow = req.user?.uflow;
+  if (!uflow) return res.status(400).json({ status: 'error', message: 'No uflow in token' });
+  try {
+    const result = await db.query('SELECT abuseipdb_enabled FROM user_settings WHERE uflow = $1', [uflow]);
+    return res.json({ status: 'success', enabled: result.rows[0]?.abuseipdb_enabled !== 0 });
+  } catch (err) {
+    console.error('Get abuseipdb error:', err);
+    return res.status(500).json({ status: 'error', message: 'Failed to fetch abuseipdb setting' });
+  }
+});
+
+router.put('/abuseipdb', async (req: AuthenticatedRequest, res: Response) => {
+  const uflow = req.user?.uflow;
+  const { enabled } = req.body;
+  if (!uflow) return res.status(400).json({ status: 'error', message: 'No uflow in token' });
+  try {
+    await db.query(
+      `INSERT INTO user_settings (uflow, abuseipdb_enabled) VALUES ($1, $2)
+       ON CONFLICT (uflow) DO UPDATE SET abuseipdb_enabled = EXCLUDED.abuseipdb_enabled`,
+      [uflow, enabled ? 1 : 0]
+    );
+    return res.json({ status: 'success', enabled: !!enabled });
+  } catch (err) {
+    console.error('Update abuseipdb error:', err);
+    return res.status(500).json({ status: 'error', message: 'Failed to update abuseipdb setting' });
+  }
+});
+
+// ── VPNapi.io Toggle ──
+
+router.get('/vpnapi', async (req: AuthenticatedRequest, res: Response) => {
+  const uflow = req.user?.uflow;
+  if (!uflow) return res.status(400).json({ status: 'error', message: 'No uflow in token' });
+  try {
+    const result = await db.query('SELECT vpnapi_enabled FROM user_settings WHERE uflow = $1', [uflow]);
+    return res.json({ status: 'success', enabled: result.rows[0]?.vpnapi_enabled !== 0 });
+  } catch (err) {
+    console.error('Get vpnapi error:', err);
+    return res.status(500).json({ status: 'error', message: 'Failed to fetch vpnapi setting' });
+  }
+});
+
+router.put('/vpnapi', async (req: AuthenticatedRequest, res: Response) => {
+  const uflow = req.user?.uflow;
+  const { enabled } = req.body;
+  if (!uflow) return res.status(400).json({ status: 'error', message: 'No uflow in token' });
+  try {
+    await db.query(
+      `INSERT INTO user_settings (uflow, vpnapi_enabled) VALUES ($1, $2)
+       ON CONFLICT (uflow) DO UPDATE SET vpnapi_enabled = EXCLUDED.vpnapi_enabled`,
+      [uflow, enabled ? 1 : 0]
+    );
+    return res.json({ status: 'success', enabled: !!enabled });
+  } catch (err) {
+    console.error('Update vpnapi error:', err);
+    return res.status(500).json({ status: 'error', message: 'Failed to update vpnapi setting' });
+  }
+});
+
+// ── IPLocate Toggle ──
+
+router.get('/iplocate', async (req: AuthenticatedRequest, res: Response) => {
+  const uflow = req.user?.uflow;
+  if (!uflow) return res.status(400).json({ status: 'error', message: 'No uflow in token' });
+  try {
+    const result = await db.query('SELECT iplocate_enabled FROM user_settings WHERE uflow = $1', [uflow]);
+    return res.json({ status: 'success', enabled: result.rows[0]?.iplocate_enabled !== 0 });
+  } catch (err) {
+    console.error('Get iplocate error:', err);
+    return res.status(500).json({ status: 'error', message: 'Failed to fetch iplocate setting' });
+  }
+});
+
+router.put('/iplocate', async (req: AuthenticatedRequest, res: Response) => {
+  const uflow = req.user?.uflow;
+  const { enabled } = req.body;
+  if (!uflow) return res.status(400).json({ status: 'error', message: 'No uflow in token' });
+  try {
+    await db.query(
+      `INSERT INTO user_settings (uflow, iplocate_enabled) VALUES ($1, $2)
+       ON CONFLICT (uflow) DO UPDATE SET iplocate_enabled = EXCLUDED.iplocate_enabled`,
+      [uflow, enabled ? 1 : 0]
+    );
+    return res.json({ status: 'success', enabled: !!enabled });
+  } catch (err) {
+    console.error('Update iplocate error:', err);
+    return res.status(500).json({ status: 'error', message: 'Failed to update iplocate setting' });
+  }
+});
+
+// ── FraudLogix Toggle ──
+
+router.get('/fraudlogix', async (req: AuthenticatedRequest, res: Response) => {
+  const uflow = req.user?.uflow;
+  if (!uflow) return res.status(400).json({ status: 'error', message: 'No uflow in token' });
+  try {
+    const result = await db.query('SELECT fraudlogix_enabled FROM user_settings WHERE uflow = $1', [uflow]);
+    return res.json({ status: 'success', enabled: result.rows[0]?.fraudlogix_enabled !== 0 });
+  } catch (err) {
+    console.error('Get fraudlogix error:', err);
+    return res.status(500).json({ status: 'error', message: 'Failed to fetch fraudlogix setting' });
+  }
+});
+
+router.put('/fraudlogix', async (req: AuthenticatedRequest, res: Response) => {
+  const uflow = req.user?.uflow;
+  const { enabled } = req.body;
+  if (!uflow) return res.status(400).json({ status: 'error', message: 'No uflow in token' });
+  try {
+    await db.query(
+      `INSERT INTO user_settings (uflow, fraudlogix_enabled) VALUES ($1, $2)
+       ON CONFLICT (uflow) DO UPDATE SET fraudlogix_enabled = EXCLUDED.fraudlogix_enabled`,
+      [uflow, enabled ? 1 : 0]
+    );
+    return res.json({ status: 'success', enabled: !!enabled });
+  } catch (err) {
+    console.error('Update fraudlogix error:', err);
+    return res.status(500).json({ status: 'error', message: 'Failed to update fraudlogix setting' });
+  }
+});
+
+// ── Referrer Blacklist ──
+
+router.get('/referrer-blacklist', async (req: AuthenticatedRequest, res: Response) => {
+  const uflow = req.user?.uflow;
+  if (!uflow) return res.status(400).json({ status: 'error', message: 'No uflow in token' });
+  try {
+    const result = await db.query(
+      'SELECT id, pattern FROM referrer_blacklist WHERE uflow = $1 ORDER BY id DESC',
+      [uflow]
+    );
+    return res.json({ status: 'success', data: result.rows });
+  } catch (err) {
+    console.error('Get referrer blacklist error:', err);
+    return res.status(500).json({ status: 'error', message: 'Failed to fetch referrer blacklist' });
+  }
+});
+
+router.post('/referrer-blacklist', async (req: AuthenticatedRequest, res: Response) => {
+  const uflow = req.user?.uflow;
+  const { pattern } = req.body;
+  if (!uflow) return res.status(400).json({ status: 'error', message: 'No uflow in token' });
+  if (!pattern || !pattern.trim()) return res.status(400).json({ status: 'error', message: 'Pattern is required' });
+  try {
+    const result = await db.query(
+      'INSERT INTO referrer_blacklist (uflow, pattern) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING id, pattern',
+      [uflow, pattern.trim()]
+    );
+    if (result.rows.length === 0) return res.status(409).json({ status: 'error', message: 'Pattern already exists' });
+    return res.json({ status: 'success', data: result.rows[0] });
+  } catch (err) {
+    console.error('Add referrer blacklist error:', err);
+    return res.status(500).json({ status: 'error', message: 'Failed to add referrer pattern' });
+  }
+});
+
+router.delete('/referrer-blacklist/:id', async (req: AuthenticatedRequest, res: Response) => {
+  const uflow = req.user?.uflow;
+  const { id } = req.params;
+  if (!uflow) return res.status(400).json({ status: 'error', message: 'No uflow in token' });
+  try {
+    const result = await db.query('DELETE FROM referrer_blacklist WHERE id = $1 AND uflow = $2', [id, uflow]);
+    if (result.rowCount === 0) return res.status(404).json({ status: 'error', message: 'Pattern not found' });
+    return res.json({ status: 'success', message: 'Referrer pattern removed' });
+  } catch (err) {
+    console.error('Delete referrer blacklist error:', err);
+    return res.status(500).json({ status: 'error', message: 'Failed to delete referrer pattern' });
+  }
+});
+
+// ── Hard Blocked IPs ──
+
+router.get('/hard-block', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const result = await db.query('SELECT id, ip FROM hard_block ORDER BY id DESC');
+    return res.json({ status: 'success', data: result.rows });
+  } catch (err) {
+    console.error('Get hard block error:', err);
+    return res.status(500).json({ status: 'error', message: 'Failed to fetch hard blocked IPs' });
+  }
+});
+
+router.post('/hard-block', async (req: AuthenticatedRequest, res: Response) => {
+  const { ip } = req.body;
+  if (!ip || !ip.trim()) return res.status(400).json({ status: 'error', message: 'IP is required' });
+  try {
+    const result = await db.query('INSERT INTO hard_block (ip) VALUES ($1) ON CONFLICT DO NOTHING RETURNING id, ip', [ip.trim()]);
+    if (result.rows.length === 0) return res.status(409).json({ status: 'error', message: 'IP already hard blocked' });
+    return res.json({ status: 'success', data: result.rows[0] });
+  } catch (err) {
+    console.error('Add hard block error:', err);
+    return res.status(500).json({ status: 'error', message: 'Failed to add hard blocked IP' });
+  }
+});
+
+router.delete('/hard-block/:id', async (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  try {
+    const result = await db.query('DELETE FROM hard_block WHERE id = $1', [id]);
+    if (result.rowCount === 0) return res.status(404).json({ status: 'error', message: 'IP not found' });
+    return res.json({ status: 'success', message: 'Hard blocked IP removed' });
+  } catch (err) {
+    console.error('Delete hard block error:', err);
+    return res.status(500).json({ status: 'error', message: 'Failed to delete hard blocked IP' });
+  }
+});
+
+// ── IP Whitelist ──
+
+router.get('/ip-whitelist', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const result = await db.query('SELECT id, ip FROM white_ip ORDER BY id DESC');
+    return res.json({ status: 'success', data: result.rows });
+  } catch (err) {
+    console.error('Get IP whitelist error:', err);
+    return res.status(500).json({ status: 'error', message: 'Failed to fetch IP whitelist' });
+  }
+});
+
+router.post('/ip-whitelist', async (req: AuthenticatedRequest, res: Response) => {
+  const { ip } = req.body;
+  if (!ip || !ip.trim()) return res.status(400).json({ status: 'error', message: 'IP is required' });
+  const cleanIp = ip.trim();
+  try {
+    const result = await db.query(
+      'INSERT INTO white_ip (ip) VALUES ($1) ON CONFLICT DO NOTHING RETURNING id, ip',
+      [cleanIp]
+    );
+    if (result.rows.length === 0) return res.status(409).json({ status: 'error', message: 'IP already whitelisted' });
+    try { await redis.del(`v:${req.user!.uflow}:${cleanIp}`); } catch {}
+    return res.json({ status: 'success', data: result.rows[0] });
+  } catch (err) {
+    console.error('Add IP whitelist error:', err);
+    return res.status(500).json({ status: 'error', message: 'Failed to add IP to whitelist' });
+  }
+});
+
+router.delete('/ip-whitelist/:id', async (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  try {
+    const result = await db.query('DELETE FROM white_ip WHERE id = $1', [id]);
+    if (result.rowCount === 0) return res.status(404).json({ status: 'error', message: 'Whitelisted IP not found' });
+    return res.json({ status: 'success', message: 'Whitelisted IP removed' });
+  } catch (err) {
+    console.error('Delete IP whitelist error:', err);
+    return res.status(500).json({ status: 'error', message: 'Failed to remove whitelisted IP' });
   }
 });
 

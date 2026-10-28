@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Copy, Check, FileCode, RefreshCw, Tag, Shield } from 'lucide-react';
+import { Copy, Check, FileCode, RefreshCw, Tag, Shield, Clipboard } from 'lucide-react';
 
 interface Snippets {
   php: string;
@@ -17,6 +17,23 @@ export const CodeGenerator: React.FC = () => {
   const [sourceName, setSourceName] = useState('');
   const [encryptedPHP, setEncryptedPHP] = useState<string | null>(null);
   const [encryptedCopied, setEncryptedCopied] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+
+  const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 1800); };
+  const copyVar = (text: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    ta.style.top = '-9999px';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    try { document.execCommand('copy'); showToast(`Copied ${text}`); } catch { /* ignore */ }
+    document.body.removeChild(ta);
+  };
 
   const API_BASE_URL = '/api';
 
@@ -93,6 +110,11 @@ export const CodeGenerator: React.FC = () => {
 
   return (
     <div style={{ maxWidth: '900px' }}>
+      {toast && (
+        <div style={{ position: 'fixed', bottom: '2rem', right: '2rem', zIndex: 100, minWidth: '200px', padding: '0.75rem 1rem', background: 'rgba(139,92,246,0.95)', color: '#fff', borderRadius: '8px', fontSize: '0.85rem', fontWeight: 500, boxShadow: '0 4px 20px rgba(0,0,0,0.3)' }}>
+          {toast}
+        </div>
+      )}
       <section className="settings-card" style={{ marginBottom: '2rem' }}>
         <h2>WebGuard Integration Code</h2>
         <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
@@ -130,6 +152,41 @@ export const CodeGenerator: React.FC = () => {
               />
             </div>
           </label>
+        </div>
+
+        {/* Shortcut Variables */}
+        <div style={{ marginBottom: '1.5rem', padding: '1rem', background: 'rgba(255,255,255,0.03)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+          <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+            <Clipboard size={14} />
+            Shortcut Variables — click to copy
+          </span>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+            {[
+              { label: 'Recipient Variables', vars: ['[-email-]', '[-emailuser-]', '[-emaildomain-]', '[-base64email-]'] },
+              { label: 'Redirect & Media', vars: ['[-url-]', '[-url-img-]'] },
+              { label: 'Identity Fields', vars: ['[-firstname-]', '[-lastname-]', '[-fullname-]', '[-company-]', '[-jobtitle-]', '[-phone-]', '[-address-]', '[-city-]', '[-country-]', '[-domain-]', '[-emoji-]'] },
+              { label: 'Random Generators', vars: ['[-randomstring-]', '[-randomnumber-]', '[-randomletters-]', '[-randomds-]', '[-randomuuid-]', '[-randomhex-]', '[-shortid-]', '[-randomcolor-]', '[-randompid-]', '[-randomu-]'] },
+              { label: 'Technical Noise', vars: ['[-randomclass-]', '[-randomid-]', '[-randommessageid-]', '[-randomboundary-]'] },
+              { label: 'Date & Timestamp', vars: ['[-date-]', '[-timestamp-]', '[-unixtime-]', '[-year-]'] },
+            ].map(group => (
+              <div key={group.label}>
+                <span style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '0.35rem', display: 'block' }}>{group.label}</span>
+                <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
+                  {group.vars.map(v => (
+                    <button key={v} type="button" onClick={(e) => copyVar(v, e)}
+                      style={{
+                        fontSize: '0.75rem', fontFamily: 'monospace', padding: '0.25rem 0.6rem', cursor: 'pointer',
+                        background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '5px',
+                        color: 'var(--text-secondary)', transition: 'all 0.12s',
+                      }}
+                      onMouseEnter={e => { e.currentTarget.style.background = 'rgba(139,92,246,0.15)'; e.currentTarget.style.color = 'var(--text-primary)'; }}
+                      onMouseLeave={e => { e.currentTarget.style.background = 'rgba(139,92,246,0.06)'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
+                    >{v}</button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
 
         {/* Tab Buttons */}

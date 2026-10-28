@@ -43,6 +43,18 @@ export const Settings: React.FC = () => {
   const [newHostname, setNewHostname] = useState('');
   const [newIsp, setNewIsp] = useState('');
 
+  const [organizations, setOrganizations] = useState<{ id: number; name: string }[]>([]);
+  const [newOrgName, setNewOrgName] = useState('');
+
+  const [referrers, setReferrers] = useState<{ id: number; pattern: string }[]>([]);
+  const [newReferrer, setNewReferrer] = useState('');
+
+  const [whitelisted, setWhitelisted] = useState<{ id: number; ip: string }[]>([]);
+  const [newWhitelist, setNewWhitelist] = useState('');
+
+  const [hardBlocked, setHardBlocked] = useState<{ id: number; ip: string }[]>([]);
+  const [newHardBlock, setNewHardBlock] = useState('');
+
   const [_savingCountries, setSavingCountries] = useState(false);
   const [savingSystems, setSavingSystems] = useState(false);
   const [savingBrowsers, setSavingBrowsers] = useState(false);
@@ -53,19 +65,27 @@ export const Settings: React.FC = () => {
   const loadSettings = async () => {
     if (!token) return;
     try {
-      const [cRes, sRes, bRes, rRes, bcRes] = await Promise.all([
+      const [cRes, sRes, bRes, rRes, bcRes, oRes, rfRes, hbRes, wlRes] = await Promise.all([
         fetch(`${API}/settings/countries`, { headers: { Authorization: `Bearer ${token}` } }),
         fetch(`${API}/settings/system`,    { headers: { Authorization: `Bearer ${token}` } }),
         fetch(`${API}/settings/browser`,   { headers: { Authorization: `Bearer ${token}` } }),
         fetch(`${API}/settings/ip-rules`,  { headers: { Authorization: `Bearer ${token}` } }),
         fetch(`${API}/settings/blocked-countries`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${API}/settings/organizations`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${API}/settings/referrer-blacklist`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${API}/settings/hard-block`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${API}/settings/ip-whitelist`, { headers: { Authorization: `Bearer ${token}` } }),
       ]);
-      const [cj, sj, bj, rj, bcj] = await Promise.all([cRes.json(), sRes.json(), bRes.json(), rRes.json(), bcRes.json()]);
+      const [cj, sj, bj, rj, bcj, oj, rfj, hbj, wlj] = await Promise.all([cRes.json(), sRes.json(), bRes.json(), rRes.json(), bcRes.json(), oRes.json(), rfRes.json(), hbRes.json(), wlRes.json()]);
       if (cj.status === 'success') setCountries(cj.allowedCountries);
       if (sj.status === 'success') { setSystems(sj.allowedSystems); setSystemOptions(sj.systemOptions); }
       if (bj.status === 'success') { setBrowsers(bj.allowedBrowsers); setBrowserOptions(bj.browserOptions); }
       if (rj.status === 'success') setBlacklists(rj.data);
       if (bcj.status === 'success') setBlockedCountries(bcj.blockedCountries);
+      if (oj.status === 'success') setOrganizations(oj.data);
+      if (rfj.status === 'success') setReferrers(rfj.data);
+      if (hbj.status === 'success') setHardBlocked(hbj.data);
+      if (wlj.status === 'success') setWhitelisted(wlj.data);
     } catch (err) { console.error('Failed to load settings:', err); }
   };
 
@@ -177,6 +197,102 @@ export const Settings: React.FC = () => {
       const res = await fetch(`${API}/settings/ip-rules/${type}/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
       const data = await res.json();
       if (res.ok && data.status === 'success') { showMessage('success', 'Rule removed'); loadSettings(); }
+      else showMessage('error', data.message || 'Failed to delete');
+    } catch { showMessage('error', 'Network error'); }
+  };
+
+  /* ── Organizations ── */
+  const handleAddOrganization = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const name = newOrgName.trim();
+    if (!name) return;
+    try {
+      const res = await fetch(`${API}/settings/organizations`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ name }),
+      });
+      const data = await res.json();
+      if (res.ok && data.status === 'success') { setNewOrgName(''); showMessage('success', 'Organization blocked'); loadSettings(); }
+      else showMessage('error', data.message || 'Failed to add organization');
+    } catch { showMessage('error', 'Network error'); }
+  };
+  const handleDeleteOrganization = async (id: number) => {
+    try {
+      const res = await fetch(`${API}/settings/organizations/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+      const data = await res.json();
+      if (res.ok && data.status === 'success') { showMessage('success', 'Organization removed'); loadSettings(); }
+      else showMessage('error', data.message || 'Failed to delete');
+    } catch { showMessage('error', 'Network error'); }
+  };
+
+  /* ── Referrer Blacklist ── */
+  const handleAddReferrer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const pattern = newReferrer.trim();
+    if (!pattern) return;
+    try {
+      const res = await fetch(`${API}/settings/referrer-blacklist`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ pattern }),
+      });
+      const data = await res.json();
+      if (res.ok && data.status === 'success') { setNewReferrer(''); showMessage('success', 'Referrer pattern added'); loadSettings(); }
+      else showMessage('error', data.message || 'Failed to add pattern');
+    } catch { showMessage('error', 'Network error'); }
+  };
+  const handleDeleteReferrer = async (id: number) => {
+    try {
+      const res = await fetch(`${API}/settings/referrer-blacklist/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+      const data = await res.json();
+      if (res.ok && data.status === 'success') { showMessage('success', 'Referrer pattern removed'); loadSettings(); }
+      else showMessage('error', data.message || 'Failed to delete');
+    } catch { showMessage('error', 'Network error'); }
+  };
+
+  /* ── IP Whitelist ── */
+  const handleAddWhitelist = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const ip = newWhitelist.trim();
+    if (!ip) return;
+    try {
+      const res = await fetch(`${API}/settings/ip-whitelist`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ ip }),
+      });
+      const data = await res.json();
+      if (res.ok && data.status === 'success') { setNewWhitelist(''); showMessage('success', 'IP whitelisted'); loadSettings(); }
+      else showMessage('error', data.message || 'Failed to add');
+    } catch { showMessage('error', 'Network error'); }
+  };
+  const handleDeleteWhitelist = async (id: number) => {
+    try {
+      const res = await fetch(`${API}/settings/ip-whitelist/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+      const data = await res.json();
+      if (res.ok && data.status === 'success') { showMessage('success', 'Whitelisted IP removed'); loadSettings(); }
+      else showMessage('error', data.message || 'Failed to delete');
+    } catch { showMessage('error', 'Network error'); }
+  };
+
+  /* ── Hard Blocked IPs ── */
+  const handleAddHardBlock = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const ip = newHardBlock.trim();
+    if (!ip) return;
+    try {
+      const res = await fetch(`${API}/settings/hard-block`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ ip }),
+      });
+      const data = await res.json();
+      if (res.ok && data.status === 'success') { setNewHardBlock(''); showMessage('success', 'IP hard blocked'); loadSettings(); }
+      else showMessage('error', data.message || 'Failed to add');
+    } catch { showMessage('error', 'Network error'); }
+  };
+  const handleDeleteHardBlock = async (id: number) => {
+    try {
+      const res = await fetch(`${API}/settings/hard-block/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+      const data = await res.json();
+      if (res.ok && data.status === 'success') { showMessage('success', 'Hard block removed'); loadSettings(); }
       else showMessage('error', data.message || 'Failed to delete');
     } catch { showMessage('error', 'Network error'); }
   };
@@ -324,6 +440,72 @@ export const Settings: React.FC = () => {
         {/* ═══ RIGHT: Blacklists ══════════════════════════════════════════ */}
         <section className="settings-card" style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
 
+          {/* Whitelisted IPs */}
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0' }}>
+              <h2 style={{ margin: 0, color: 'var(--color-success)' }}>Whitelisted IPs</h2>
+              <span style={{
+                fontSize: '0.72rem', fontWeight: 700, lineHeight: 1,
+                padding: '0.2rem 0.55rem', borderRadius: '999px',
+                background: whitelisted.length > 0 ? 'rgba(16,185,129,0.15)' : 'rgba(255,255,255,0.06)',
+                color: whitelisted.length > 0 ? '#34d399' : 'var(--text-muted)',
+                border: '1px solid ' + (whitelisted.length > 0 ? 'rgba(16,185,129,0.3)' : 'var(--border-color)'),
+              }}>
+                {whitelisted.length.toLocaleString()} entries
+              </span>
+            </div>
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: '0.5rem 0 0.75rem' }}>
+              These IPs bypass the entire detection pipeline and are always allowed.
+            </p>
+            <form onSubmit={handleAddWhitelist} style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+              <input type="text" className="form-input" placeholder="e.g. 122.3.151.84" value={newWhitelist} onChange={e => setNewWhitelist(e.target.value)} />
+              <button type="submit" className="btn btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', background: 'var(--color-success)', borderColor: 'transparent' }}><Plus size={16} /> Whitelist</button>
+            </form>
+            <div style={{ maxHeight: '320px', overflowY: 'auto', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '0.5rem' }}>
+              {whitelisted.length > 0 ? whitelisted.map(w => (
+                <div key={w.id} className="rule-list-item">
+                  <code style={{ color: 'var(--color-success)' }}>{w.ip}</code>
+                  <button className="btn btn-secondary" style={{ padding: '0.25rem', borderColor: 'transparent', color: 'var(--color-accent)' }} onClick={() => handleDeleteWhitelist(w.id)}>
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              )) : <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', textAlign: 'center', padding: '1rem' }}>No whitelisted IPs</div>}
+            </div>
+          </div>
+
+          {/* Hard Blocked IPs */}
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0' }}>
+              <h2 style={{ margin: 0, color: 'var(--color-accent)' }}>Hard Blocked IPs</h2>
+              <span style={{
+                fontSize: '0.72rem', fontWeight: 700, lineHeight: 1,
+                padding: '0.2rem 0.55rem', borderRadius: '999px',
+                background: hardBlocked.length > 0 ? 'rgba(239,68,68,0.2)' : 'rgba(255,255,255,0.06)',
+                color: hardBlocked.length > 0 ? '#f87171' : 'var(--text-muted)',
+                border: '1px solid ' + (hardBlocked.length > 0 ? 'rgba(239,68,68,0.4)' : 'var(--border-color)'),
+              }}>
+                {hardBlocked.length.toLocaleString()} entries
+              </span>
+            </div>
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-accent)', margin: '0.5rem 0 0.75rem' }}>
+              These IPs are blocked immediately without any pipeline processing, logging, or caching. Use for aggressive scanners.
+            </p>
+            <form onSubmit={handleAddHardBlock} style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+              <input type="text" className="form-input" placeholder="e.g. 216.244.66.249" value={newHardBlock} onChange={e => setNewHardBlock(e.target.value)} />
+              <button type="submit" className="btn btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', background: 'var(--color-accent)', borderColor: 'transparent' }}><Plus size={16} /> Hard Block</button>
+            </form>
+            <div style={{ maxHeight: '320px', overflowY: 'auto', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '0.5rem' }}>
+              {hardBlocked.length > 0 ? hardBlocked.map(hb => (
+                <div key={hb.id} className="rule-list-item">
+                  <code style={{ color: 'var(--color-accent)' }}>{hb.ip}</code>
+                  <button className="btn btn-secondary" style={{ padding: '0.25rem', borderColor: 'transparent', color: 'var(--color-accent)' }} onClick={() => handleDeleteHardBlock(hb.id)}>
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              )) : <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', textAlign: 'center', padding: '1rem' }}>No hard blocked IPs</div>}
+            </div>
+          </div>
+
           {/* IP Blacklist */}
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0' }}>
@@ -420,6 +602,72 @@ export const Settings: React.FC = () => {
                   </button>
                 </div>
               )) : <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', textAlign: 'center', padding: '1rem' }}>ISP list empty</div>}
+            </div>
+          </div>
+
+          {/* Referrer Blacklist */}
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0' }}>
+              <h2 style={{ margin: 0 }}>Referrer Blacklist</h2>
+              <span style={{
+                fontSize: '0.72rem', fontWeight: 700, lineHeight: 1,
+                padding: '0.2rem 0.55rem', borderRadius: '999px',
+                background: referrers.length > 0 ? 'rgba(239,68,68,0.15)' : 'rgba(255,255,255,0.06)',
+                color: referrers.length > 0 ? '#f87171' : 'var(--text-muted)',
+                border: '1px solid ' + (referrers.length > 0 ? 'rgba(239,68,68,0.3)' : 'var(--border-color)'),
+              }}>
+                {referrers.length.toLocaleString()} entries
+              </span>
+            </div>
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: '0.5rem 0 0.75rem' }}>
+              Block visits whose HTTP referrer contains these patterns (e.g. <code>facebook.com</code>, <code>tiktok</code>).
+            </p>
+            <form onSubmit={handleAddReferrer} style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+              <input type="text" className="form-input" placeholder="e.g. facebook.com" value={newReferrer} onChange={e => setNewReferrer(e.target.value)} />
+              <button type="submit" className="btn btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}><Plus size={16} /> Block</button>
+            </form>
+            <div style={{ maxHeight: '320px', overflowY: 'auto', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '0.5rem' }}>
+              {referrers.length > 0 ? referrers.map(r => (
+                <div key={r.id} className="rule-list-item">
+                  <code>{r.pattern}</code>
+                  <button className="btn btn-secondary" style={{ padding: '0.25rem', borderColor: 'transparent', color: 'var(--color-accent)' }} onClick={() => handleDeleteReferrer(r.id)}>
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              )) : <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', textAlign: 'center', padding: '1rem' }}>Referrer list empty</div>}
+            </div>
+          </div>
+
+          {/* Organization Blacklist */}
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0' }}>
+              <h2 style={{ margin: 0 }}>Blocked Organizations</h2>
+              <span style={{
+                fontSize: '0.72rem', fontWeight: 700, lineHeight: 1,
+                padding: '0.2rem 0.55rem', borderRadius: '999px',
+                background: organizations.length > 0 ? 'rgba(239,68,68,0.15)' : 'rgba(255,255,255,0.06)',
+                color: organizations.length > 0 ? '#f87171' : 'var(--text-muted)',
+                border: '1px solid ' + (organizations.length > 0 ? 'rgba(239,68,68,0.3)' : 'var(--border-color)'),
+              }}>
+                {organizations.length.toLocaleString()} entries
+              </span>
+            </div>
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: '0.5rem 0 0.75rem' }}>
+              Block visitors whose ISP organization matches these names (case-insensitive exact match).
+            </p>
+            <form onSubmit={handleAddOrganization} style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+              <input type="text" className="form-input" placeholder="e.g. DigitalOcean, LLC" value={newOrgName} onChange={e => setNewOrgName(e.target.value)} />
+              <button type="submit" className="btn btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}><Plus size={16} /> Block</button>
+            </form>
+            <div style={{ maxHeight: '320px', overflowY: 'auto', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '0.5rem' }}>
+              {organizations.length > 0 ? organizations.map(org => (
+                <div key={org.id} className="rule-list-item">
+                  <code>{org.name}</code>
+                  <button className="btn btn-secondary" style={{ padding: '0.25rem', borderColor: 'transparent', color: 'var(--color-accent)' }} onClick={() => handleDeleteOrganization(org.id)}>
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              )) : <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', textAlign: 'center', padding: '1rem' }}>Organization list empty</div>}
             </div>
           </div>
 

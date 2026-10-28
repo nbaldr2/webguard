@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { detectBot } from '../services/detection';
+import { db } from '../db';
 
 const router = Router();
 
@@ -18,6 +19,14 @@ router.post('/', async (req: Request, res: Response) => {
   const referrer = ref || '';
   const userAgent = ua || req.headers['user-agent'] || '';
   const visitSource = src || source || '';
+
+  // Hard block check — before pipeline, cache, or logging
+  try {
+    const hbRes = await db.query('SELECT 1 FROM hard_block WHERE ip = $1 LIMIT 1', [clientIp]);
+    if (hbRes.rows.length > 0) {
+      return res.send('0');
+    }
+  } catch {}
 
   try {
     const { isBot, blockReason } = await detectBot({

@@ -145,7 +145,7 @@ export const Dashboard: React.FC = () => {
     fetchVisits(visits.length, true);
   };
 
-  const handleClearVisits = async () => {
+const handleClearVisits = async () => {
     if (!token) return;
     if (!window.confirm('Are you sure you want to clear all visits? This cannot be undone.')) return;
 
@@ -161,10 +161,25 @@ export const Dashboard: React.FC = () => {
       if (data.status === 'success') {
         setVisits([]);
         setTotalVisits(0);
-        setHasMoreVisits(false);
+        setStats(prev => prev ? { ...prev, total_visits: 0, blocked_visits: 0, allowed_visits: 0, today_visits: 0 } : prev);
       }
     } catch (err) {
       console.error('Error clearing visits:', err);
+    }
+  };
+
+  const handleClearCache = async () => {
+    if (!token) return;
+    if (!window.confirm('Clear cached verdicts? Repeat visitors will be re-evaluated from scratch.')) return;
+    try {
+      const res = await fetch(`${API_BASE_URL}/dashboard/clear-cache`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (data.status === 'success') alert(`Cache cleared: ${data.message}`);
+    } catch (err) {
+      console.error('Error clearing cache:', err);
     }
   };
 
@@ -490,6 +505,14 @@ export const Dashboard: React.FC = () => {
               <Trash2 size={12} style={{ marginRight: '0.25rem', verticalAlign: 'middle' }} />
               Clear Visits
             </button>
+            <button
+              className="btn btn-secondary"
+              onClick={handleClearCache}
+              style={{ padding: '0.3rem 0.6rem', fontSize: '0.75rem', color: 'var(--color-primary)', borderColor: 'rgba(139, 92, 246, 0.2)' }}
+            >
+              <Trash2 size={12} style={{ marginRight: '0.25rem', verticalAlign: 'middle' }} />
+              Clear Cache
+            </button>
           </div>
         </div>
 
@@ -518,9 +541,9 @@ export const Dashboard: React.FC = () => {
                       </td>
                       <td>
                         <a href={`https://ipinfo.io/${visit.ip}`} target="_blank" rel="noopener noreferrer"
-                            className="visit-ip" style={{ textDecoration: 'none', cursor: 'pointer', color: 'inherit' }}
-                            onClick={e => e.stopPropagation()}
-                          >{visit.ip}</a>
+  className="visit-ip" style={{ textDecoration: 'none', cursor: 'pointer', color: 'inherit' }}
+  onClick={e => e.stopPropagation()}
+>{visit.ip}</a>
                         {visit.hostname && visit.hostname !== 'N/A' && visit.hostname !== visit.ip && (
                           <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                             {visit.hostname}
